@@ -486,6 +486,17 @@ demonstrating the reasoning is real. Driven by SSE (§5.6).
   backend (request-driven); the Scheduler is intentionally a fixed single
   replica (§2.2), and the MCP server may get a modest HPA range since it's
   stateless request/response.
+- **Scheduler liveness probe (non-generic, by requirement):** because the
+  Scheduler is a single, non-redundant replica (§2.2, §10), a generic
+  process-alive probe is not sufficient for it — it would restart the pod
+  on a crash but would never catch a hang. The Scheduler exposes a
+  heartbeat (a last-tick timestamp, updated at the end of every scheduling
+  loop iteration); its liveness probe checks that timestamp against the
+  expected cadence and fails the probe — forcing a restart — if the
+  Scheduler has gone stale beyond a defined threshold, not just if the
+  process has died. The other three workloads use a standard
+  process/HTTP-health liveness probe, since their redundancy makes a
+  hung-but-alive instance a much lower-stakes failure.
 - **Secrets**: provider API keys (Finnhub, FMP, FRED, Marketaux) as
   Kubernetes Secrets, separate per namespace, populated from GitHub
   Actions secrets at deploy time. AWS access (Bedrock, DynamoDB, S3) comes
@@ -520,6 +531,17 @@ demonstrating the reasoning is real. Driven by SSE (§5.6).
 
 ## 10. Error Handling
 
+- **Scheduler single point of failure (by design):** the Scheduler is the
+  system's single point of failure by design (§2.2) — it deliberately runs
+  as one non-redundant replica, unlike the Frontend, API Backend, and MCP
+  server, which all have HPA-backed redundancy to fall back on if one
+  instance misbehaves. If the Scheduler hangs rather than crashes (a
+  deadlock, or a call that never returns), the entire pipeline silently
+  stops with nothing to pick up the slack. This is why its liveness probe
+  is specified separately in §9 as a heartbeat/last-tick check rather than
+  a generic process-alive check: a generic probe would miss a deadlocked
+  Scheduler entirely, since the process is still "alive" from Kubernetes'
+  perspective while doing nothing.
 - **Circuit breaker** (TradingView-backed tools, shared across both
   third-party servers and the discovery tier): after a small number of
   consecutive failures, stop calling for a cooldown period and serve the
