@@ -816,7 +816,7 @@ All three Python services (MCP server, Scheduler, API Backend) read or write the
 - Modify: `services/mcp-server/pyproject.toml`, `services/scheduler/pyproject.toml`, `services/api-backend/pyproject.toml` (add `common` as a local path dependency)
 
 **Interfaces:**
-- Produces: `read_tool_result(pk: str) -> dict | None`, `write_tool_result(pk: str, payload: dict, ttl_seconds: int) -> None`, `read_agent_output(symbol: str, agent_name: str) -> dict | None`, `write_agent_output(symbol: str, agent_name: str, payload: dict) -> None`, `append_process_history(symbol: str, agent: str, reason: str, status: str, timestamp: datetime) -> None`, `query_process_history(symbol: str, since: datetime | None = None) -> list[dict]`. Task 12 (the process-history MCP tool), Task 16 (Input Data Agent), and Tasks 27/28/29/30 (API Backend's watchlist, dashboard, stream, and chat endpoints) all import from `common.dynamo`.
+- Produces: `read_tool_result(pk: str) -> dict | None`, `write_tool_result(pk: str, payload: dict, ttl_seconds: int) -> None`, `read_agent_output(symbol: str, agent_name: str) -> dict | None`, `write_agent_output(symbol: str, agent_name: str, payload: dict) -> None`, `append_process_history(symbol: str, agent: str, reason: str, status: str, timestamp: datetime) -> None`, `query_process_history(symbol: str, since: datetime | None = None) -> list[dict]`, `record_fetch_attempt(pk: str, timestamp: datetime) -> None`, `get_last_fetch_attempt(pk: str) -> datetime | None`. Task 12 (the process-history MCP tool), Task 16 (Input Data Agent, all of these including the last two for cadence enforcement), and Tasks 27/28/29/30 (API Backend's watchlist, dashboard, stream, and chat endpoints) all import from `common.dynamo`.
 - Consumes: table names `"ToolResults"`, `"AgentOutputs"`, `"ProcessHistory"` (must match Task 2's `TABLE_DEFINITIONS` keys exactly), env vars `DYNAMODB_ENDPOINT` (optional, for local), `TOOL_PAYLOADS_BUCKET`, `AWS_REGION`.
 
 - [ ] **Step 1: Write `packages/common/pyproject.toml`**
@@ -848,6 +848,7 @@ from common.dynamo import (
     read_tool_result, write_tool_result,
     read_agent_output, write_agent_output,
     append_process_history, query_process_history,
+    record_fetch_attempt, get_last_fetch_attempt,
     ensure_tables_for_test,
 )
 
@@ -897,6 +898,20 @@ def test_process_history_query_since_filters_older_entries(aws):
     entries = query_process_history("AAPL", since=datetime(2026, 1, 1, 12, 30, tzinfo=timezone.utc))
     assert len(entries) == 1
     assert entries[0]["timestamp"] == t2.isoformat()
+
+def test_last_fetch_attempt_is_none_before_any_attempt(aws):
+    assert get_last_fetch_attempt("AAPL#finnhub_company_profile") is None
+
+def test_record_and_read_back_last_fetch_attempt(aws):
+    t = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    record_fetch_attempt("AAPL#finnhub_company_profile", t)
+    assert get_last_fetch_attempt("AAPL#finnhub_company_profile") == t
+
+def test_recording_an_attempt_does_not_disturb_the_actual_tool_result(aws, monkeypatch):
+    monkeypatch.setenv("TOOL_PAYLOADS_BUCKET", "tool-payloads-test")
+    write_tool_result("AAPL#Quote", {"price": 150}, ttl_seconds=3600)
+    record_fetch_attempt("AAPL#Quote", datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc))
+    assert read_tool_result("AAPL#Quote") == {"price": 150}
 ```
 
 - [ ] **Step 3: Run to verify failure**
@@ -987,12 +1002,28 @@ def query_process_history(symbol: str, since: datetime | None = None) -> list[di
     if since is not None:
         items = [i for i in items if i["timestamp"] >= since.isoformat()]
     return items
+
+_FETCH_ATTEMPT_TTL_SECONDS = 7 * 86400  # generous fixed window, independent of any tool's own cadence
+
+def record_fetch_attempt(pk: str, timestamp: datetime) -> None:
+    """Records that a *successful* live call was made for `pk`, independent of whether the
+    fetched value actually changed. This is deliberately separate from write_tool_result,
+    which only writes on a diff — cadence enforcement (Task 16's _is_due) needs "when did we
+    last try" even when the value has been stable for a while and nothing gets rewritten."""
+    table = _dynamo_resource().Table("ToolResults")
+    expires_at = int(timestamp.timestamp()) + _FETCH_ATTEMPT_TTL_SECONDS
+    table.put_item(Item={"pk": f"{pk}#LAST_ATTEMPT", "attempted_at": timestamp.isoformat(), "expires_at": expires_at})
+
+def get_last_fetch_attempt(pk: str) -> datetime | None:
+    table = _dynamo_resource().Table("ToolResults")
+    item = table.get_item(Key={"pk": f"{pk}#LAST_ATTEMPT"}).get("Item")
+    return datetime.fromisoformat(item["attempted_at"]) if item else None
 ```
 
 - [ ] **Step 5: Run to verify pass**
 
 Run: `cd packages/common && pytest -v`
-Expected: 6 passed
+Expected: 9 passed
 
 - [ ] **Step 6: Wire `common` as a path dependency in each service**
 
@@ -1004,7 +1035,7 @@ dependencies = [
 ]
 ```
 
-Each service's Dockerfile (written in Tasks 17, 30, 36) must `COPY packages/common /packages/common` alongside its own service directory, since the path dependency is relative to the monorepo root.
+Each service's Dockerfile (written in Tasks 13, 26, 31) must `COPY packages/common /packages/common` alongside its own service directory, since the path dependency is relative to the monorepo root.
 
 - [ ] **Step 7: Commit**
 
@@ -1936,7 +1967,7 @@ Encodes spec §7's table as data + a market-hours predicate, including the corre
 - Test: `services/scheduler/tests/unit/test_schedule_config.py`
 
 **Interfaces:**
-- Produces: `is_regular_market_hours(now_et: datetime) -> bool`, `is_extended_hours(now_et: datetime) -> bool` (4:00am–8:00pm ET), `ProviderSchedule` (dataclass: `cadence_seconds_regular: int`, `cadence_seconds_extended: int | None`, `active_overnight: bool`), `SCHEDULES: dict[str, ProviderSchedule]` keyed `"marketaux"`, `"fmp"`, `"finnhub_static"`, `"finnhub_live"`, `"fred_slow"`, `"fred_vix"`, `"discovery"`. Task 24's async scheduler loop drives its cadence entirely from this module.
+- Produces: `is_regular_market_hours(now_et: datetime) -> bool`, `is_extended_hours(now_et: datetime) -> bool` (4:00am–8:00pm ET), `ProviderSchedule` (dataclass: `cadence_seconds_regular: int`, `cadence_seconds_extended: int | None`, `active_overnight: bool`), `SCHEDULES: dict[str, ProviderSchedule]` keyed `"marketaux"`, `"fmp"`, `"finnhub_static"`, `"finnhub_live"`, `"fred_slow"`, `"fred_vix"`, `"technical_options"`, `"discovery"`. Task 24's async scheduler loop drives its cadence entirely from this module.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1974,6 +2005,15 @@ def test_discovery_has_no_separate_extended_tier_reuses_regular_cadence_througho
     # Per spec §7: discovery uses ONE flat 30-min cadence across the whole 4am-8pm window,
     # not Marketaux's separate 90-min pre/after-hours tier.
     assert SCHEDULES["discovery"].cadence_seconds_extended == SCHEDULES["discovery"].cadence_seconds_regular
+
+def test_technical_options_schedule_is_not_finnhub_lives_aggressive_60s_cadence():
+    # TradingView-backed per-symbol technicals/options are a different provider with a
+    # different constraint than Finnhub's quote polling (no per-minute quota of its own, but
+    # a real shared, fragile upstream behind the circuit breaker) — reusing finnhub_live's
+    # 60s cadence here would mean up to 30 symbols x 6 tools = 180 calls/min against that
+    # shared dependency, which is exactly what the circuit breaker exists to protect against.
+    assert SCHEDULES["technical_options"].cadence_seconds_regular == 300
+    assert SCHEDULES["technical_options"].cadence_seconds_regular != SCHEDULES["finnhub_live"].cadence_seconds_regular
 ```
 
 - [ ] **Step 2: Run to verify failure**
@@ -2016,6 +2056,12 @@ SCHEDULES: dict[str, ProviderSchedule] = {
     "finnhub_live": ProviderSchedule(cadence_seconds_regular=60, cadence_seconds_extended=60, active_overnight=False),
     "fred_slow": ProviderSchedule(cadence_seconds_regular=86400, cadence_seconds_extended=None, active_overnight=False),
     "fred_vix": ProviderSchedule(cadence_seconds_regular=3600, cadence_seconds_extended=None, active_overnight=False),
+    # TradingView-backed per-symbol technicals/options (Full Technical Analysis, Options
+    # Chain, etc., Task 16): a different provider from Finnhub, with no per-minute quota of
+    # its own but a real shared, fragile upstream — protected by the circuit breaker (Task 5),
+    # not a quota. 5-min cadence during extended hours keeps per-symbol call volume against
+    # that shared dependency reasonable without needing near-real-time freshness.
+    "technical_options": ProviderSchedule(cadence_seconds_regular=300, cadence_seconds_extended=None, active_overnight=False),
     # Discovery tier: flat 30-min cadence across the whole 4am-8pm extended window, reusing
     # Marketaux's regular-hours number per spec §7 rather than introducing a separate tier.
     "discovery": ProviderSchedule(cadence_seconds_regular=1800, cadence_seconds_extended=1800, active_overnight=False),
@@ -2025,7 +2071,7 @@ SCHEDULES: dict[str, ProviderSchedule] = {
 - [ ] **Step 4: Run to verify pass**
 
 Run: `cd services/scheduler && pytest tests/unit/test_schedule_config.py -v`
-Expected: 6 passed
+Expected: 8 passed
 
 - [ ] **Step 5: Commit**
 
@@ -2149,16 +2195,20 @@ FETCH_PLAN: list[FetchSpec] = [
     # Sentiment — Marketaux (news-diff by UUID) + Finnhub company news
     FetchSpec("marketaux_news_all", "own", "sentiment", "marketaux", True, is_news=True),
     FetchSpec("finnhub_company_news", "own", "sentiment", "finnhub_live", True, is_news=True),
-    # Technical — Finnhub quote + TradingView-backed per-symbol technicals (share the
-    # finnhub_live cadence tier: frequently-changing, market-hours-gated per-symbol data;
-    # additionally protected by the shared circuit breaker since server != "own")
+    # Technical — Finnhub quote uses finnhub_live (its own per-minute quota, sliding-window
+    # limited). TradingView-backed per-symbol technicals are a DIFFERENT provider with no
+    # per-minute quota of its own but a real shared, fragile upstream (spec §7) — they get
+    # their own "technical_options" cadence tier (Task 15), not finnhub_live's, since reusing
+    # Finnhub's 60s cadence here would mean up to 30 symbols x 6 tools = 180 calls/min against
+    # that shared dependency. Still protected by the shared circuit breaker since server != "own".
     FetchSpec("finnhub_quote", "own", "technical", "finnhub_live", True),
-    FetchSpec("full_technical_analysis", "tradingview", "technical", "finnhub_live", True),
-    FetchSpec("multi_timeframe_analysis", "tradingview", "technical", "finnhub_live", True),
-    FetchSpec("volume_confirmation_analysis", "tradingview", "technical", "finnhub_live", True),
-    FetchSpec("candlestick_pattern_analysis", "tradingview", "technical", "finnhub_live", True),
-    FetchSpec("tradingview_technicals", "stock_scanner", "technical", "finnhub_live", True),
-    # Macro/Options — FRED series (global, not per-symbol) + TradingView options (per-symbol)
+    FetchSpec("full_technical_analysis", "tradingview", "technical", "technical_options", True),
+    FetchSpec("multi_timeframe_analysis", "tradingview", "technical", "technical_options", True),
+    FetchSpec("volume_confirmation_analysis", "tradingview", "technical", "technical_options", True),
+    FetchSpec("candlestick_pattern_analysis", "tradingview", "technical", "technical_options", True),
+    FetchSpec("tradingview_technicals", "stock_scanner", "technical", "technical_options", True),
+    # Macro/Options — FRED series (global, not per-symbol) + TradingView options (per-symbol,
+    # same technical_options cadence tier as the technicals above, for the same reason)
     FetchSpec("fred_federal_funds_rate", "own", "macro_options", "fred_slow", False),
     FetchSpec("fred_10y_treasury_yield", "own", "macro_options", "fred_slow", False),
     FetchSpec("fred_2y_treasury_yield", "own", "macro_options", "fred_slow", False),
@@ -2169,8 +2219,8 @@ FETCH_PLAN: list[FetchSpec] = [
     FetchSpec("fred_consumer_sentiment", "own", "macro_options", "fred_slow", False),
     FetchSpec("fred_vix", "own", "macro_options", "fred_vix", False),
     FetchSpec("fmp_economic_indicators", "own", "macro_options", "fmp", False),
-    FetchSpec("options_chain", "tradingview", "macro_options", "finnhub_live", True),
-    FetchSpec("unusual_options_activity", "tradingview", "macro_options", "finnhub_live", True),
+    FetchSpec("options_chain", "tradingview", "macro_options", "technical_options", True),
+    FetchSpec("unusual_options_activity", "tradingview", "macro_options", "technical_options", True),
 ]
 ```
 
@@ -2197,6 +2247,8 @@ async def test_new_symbol_triggers_full_fetch_and_all_specialists_marked_changed
     monkeypatch.setattr("src.input_data_agent.read_tool_result", lambda pk: None)
     monkeypatch.setattr("src.input_data_agent.write_tool_result", lambda *a, **k: None)
     monkeypatch.setattr("src.input_data_agent.append_process_history", lambda *a, **k: None)
+    monkeypatch.setattr("src.input_data_agent.record_fetch_attempt", lambda *a, **k: None)
+    monkeypatch.setattr("src.input_data_agent.get_last_fetch_attempt", lambda pk: None)
 
     result = await run_input_data_agent_for_symbol(
         mcp_client=object(), symbol="AAPL", watchlist=["AAPL"], is_new_symbol=True,
@@ -2221,6 +2273,10 @@ async def test_scheduled_tick_only_marks_specialists_whose_data_actually_changed
     monkeypatch.setattr("src.input_data_agent.read_tool_result", fake_read)
     monkeypatch.setattr("src.input_data_agent.write_tool_result", lambda *a, **k: None)
     monkeypatch.setattr("src.input_data_agent.append_process_history", lambda *a, **k: None)
+    monkeypatch.setattr("src.input_data_agent.record_fetch_attempt", lambda *a, **k: None)
+    # No prior attempt recorded for anything -> every schedule-driven tool is due this tick,
+    # isolating the assertion to diff_changed's behavior rather than cadence gating.
+    monkeypatch.setattr("src.input_data_agent.get_last_fetch_attempt", lambda pk: None)
 
     result = await run_input_data_agent_for_symbol(
         mcp_client=object(), symbol="AAPL", watchlist=["AAPL"], is_new_symbol=False,
@@ -2240,7 +2296,10 @@ Expected: FAIL — `run_input_data_agent_for_symbol` not defined
 # append to services/scheduler/src/input_data_agent.py
 import logging
 from .mcp_clients import call_tool
-from common.dynamo import read_tool_result, write_tool_result, append_process_history
+from common.dynamo import (
+    read_tool_result, write_tool_result, append_process_history,
+    record_fetch_attempt, get_last_fetch_attempt,
+)
 from .schedule_config import SCHEDULES, is_regular_market_hours, is_extended_hours
 from .rate_limit.sliding_window import SlidingWindowLimiter
 from .rate_limit.daily_cap import DailyCapScheduler
@@ -2249,7 +2308,7 @@ logger = logging.getLogger(__name__)
 
 _TTL_SECONDS = {
     "marketaux": 1800, "fmp": 3 * 86400, "finnhub_static": 86400,
-    "finnhub_live": 60, "fred_slow": 86400, "fred_vix": 3600,
+    "finnhub_live": 60, "fred_slow": 86400, "fred_vix": 3600, "technical_options": 300,
 }
 
 @dataclass
@@ -2264,17 +2323,33 @@ class InputDataAgentResult:
 _finnhub_live_limiter = SlidingWindowLimiter(max_calls=55, window_seconds=60)
 _marketaux_daily_backstop = DailyCapScheduler(daily_cap=100, safety_margin=10)
 
-def _is_due(spec: FetchSpec, now_utc: datetime, now_et: datetime, is_new_symbol: bool) -> bool:
+def _is_due(spec: FetchSpec, pk: str, now_utc: datetime, now_et: datetime, is_new_symbol: bool) -> bool:
     if is_new_symbol:
         return True
     schedule = SCHEDULES[spec.schedule_key]
     if not schedule.active_overnight and not is_extended_hours(now_et):
         return False
-    if spec.schedule_key == "finnhub_live" and not _finnhub_live_limiter.allow(now_utc):
-        return False  # per-minute budget exhausted; skip this tick, cached value keeps serving
-    if spec.schedule_key == "marketaux" and not _marketaux_daily_backstop.allow(now_utc):
-        return False  # daily backstop exhausted; skip until the cap resets at UTC midnight
-    return True  # cadence timing itself is enforced by the scheduler loop's tick interval (Task 24)
+
+    if spec.schedule_key == "finnhub_live":
+        return _finnhub_live_limiter.allow(now_utc)  # per-minute budget; false = skip this tick
+    if spec.schedule_key == "marketaux":
+        return _marketaux_daily_backstop.allow(now_utc)  # daily backstop; false = skip until UTC midnight
+
+    # Every other schedule-driven tool (fmp, finnhub_static, fred_slow, fred_vix,
+    # technical_options) has no dedicated rate limiter of its own, so cadence is enforced
+    # directly here: has enough time actually elapsed since the last successful fetch attempt?
+    # (This was the bug: previously this function only checked "is it market/extended hours",
+    # which is True on every one of the Scheduler's 60s ticks — meaning finnhub_static's 11
+    # daily tools, for example, would have been called once per minute per symbol instead of
+    # once per day, directly contradicting spec §7's per-provider cadences.)
+    last_attempt = get_last_fetch_attempt(pk)
+    if last_attempt is None:
+        return True
+    if schedule.cadence_seconds_extended is not None and is_extended_hours(now_et) and not is_regular_market_hours(now_et):
+        cadence = schedule.cadence_seconds_extended
+    else:
+        cadence = schedule.cadence_seconds_regular
+    return (now_utc - last_attempt).total_seconds() >= cadence
 
 async def run_input_data_agent_for_symbol(
     mcp_client, symbol: str, watchlist: list[str], is_new_symbol: bool,
@@ -2283,21 +2358,30 @@ async def run_input_data_agent_for_symbol(
     result = InputDataAgentResult(is_new_symbol=is_new_symbol)
 
     for spec in FETCH_PLAN:
+        pk = f"{symbol}#{spec.tool_name}" if spec.per_symbol else f"GLOBAL#{spec.tool_name}"
+
         if spec.per_symbol and spec.schedule_key == "fmp" and not is_new_symbol:
+            # fmp_is_due_today's 3-day rotation already spaces a given symbol's FMP calls
+            # ~3 days apart, comfortably wider than fmp's own 1-day generic cadence below — so
+            # the two checks are complementary (rotation picks the day, cadence is a no-op
+            # backstop on that day), not in conflict or bypassing one another.
             if not fmp_is_due_today(symbol, watchlist, now_utc.date()):
                 continue
-        if not _is_due(spec, now_utc, now_et, is_new_symbol):
+        if not _is_due(spec, pk, now_utc, now_et, is_new_symbol):
             continue
 
-        pk = f"{symbol}#{spec.tool_name}" if spec.per_symbol else f"GLOBAL#{spec.tool_name}"
         params = {"symbol": symbol} if spec.per_symbol else {}
         try:
             current = await call_tool(mcp_client, spec.server, spec.tool_name, **params)
         except Exception:
             # One tool failing (e.g. Marketaux unreachable) must never block the rest of this
-            # symbol's scheduled fetches (spec §10) — skip it, retry on the next tick.
+            # symbol's scheduled fetches (spec §10) — skip it, retry on the next tick. Deliberately
+            # do NOT record a fetch attempt here: a failed call shouldn't push the next retry a
+            # full cadence period out, only a successful one should reset that clock.
             logger.warning("fetch failed for %s/%s, will retry next tick", symbol, spec.tool_name, exc_info=True)
             continue
+
+        record_fetch_attempt(pk, now_utc)
         previous = read_tool_result(pk)
 
         if diff_changed(previous, current, is_news=spec.is_news):
@@ -2332,11 +2416,109 @@ async def cross_check_analyst_price_targets(mcp_client, symbol: str) -> dict:
 Run: `cd services/scheduler && pytest tests/unit/test_input_data_agent.py -v`
 Expected: 7 passed
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 9: Write failing tests proving cadence is actually enforced per schedule type**
+
+These specifically target the bug the earlier version of this task had: `_is_due` checked
+market/extended hours but never compared elapsed time against `SCHEDULES[...].cadence_seconds_*`,
+so e.g. `finnhub_static`'s 11 daily tools would have been called once per minute per symbol
+(matching the Scheduler's tick interval) instead of once per day.
+
+```python
+# append to services/scheduler/tests/unit/test_input_data_agent.py
+from src.input_data_agent import _is_due
+
+def test_finnhub_static_not_due_30_seconds_after_last_attempt():
+    spec = next(f for f in FETCH_PLAN if f.tool_name == "finnhub_company_profile")
+    now = datetime(2026, 1, 5, 15, 0, 30)
+    last_attempt = datetime(2026, 1, 5, 15, 0, 0)
+    with patch("src.input_data_agent.get_last_fetch_attempt", return_value=last_attempt):
+        assert _is_due(spec, "AAPL#finnhub_company_profile", now, datetime(2026, 1, 5, 10, 0, 30, tzinfo=ET), is_new_symbol=False) is False
+
+def test_finnhub_static_due_25_hours_after_last_attempt():
+    spec = next(f for f in FETCH_PLAN if f.tool_name == "finnhub_company_profile")
+    last_attempt = datetime(2026, 1, 4, 15, 0, 0)
+    now = datetime(2026, 1, 5, 16, 0, 0)  # 25 hours later
+    with patch("src.input_data_agent.get_last_fetch_attempt", return_value=last_attempt):
+        assert _is_due(spec, "AAPL#finnhub_company_profile", now, datetime(2026, 1, 5, 11, 0, 0, tzinfo=ET), is_new_symbol=False) is True
+
+def test_fred_vix_hourly_cadence_not_due_30_minutes_in():
+    spec = next(f for f in FETCH_PLAN if f.tool_name == "fred_vix")
+    now = datetime(2026, 1, 5, 15, 30, 0)
+    last_attempt = datetime(2026, 1, 5, 15, 0, 0)
+    with patch("src.input_data_agent.get_last_fetch_attempt", return_value=last_attempt):
+        assert _is_due(spec, "GLOBAL#fred_vix", now, datetime(2026, 1, 5, 10, 30, 0, tzinfo=ET), is_new_symbol=False) is False
+
+def test_fred_vix_hourly_cadence_due_after_61_minutes():
+    spec = next(f for f in FETCH_PLAN if f.tool_name == "fred_vix")
+    now = datetime(2026, 1, 5, 16, 1, 0)
+    last_attempt = datetime(2026, 1, 5, 15, 0, 0)
+    with patch("src.input_data_agent.get_last_fetch_attempt", return_value=last_attempt):
+        assert _is_due(spec, "GLOBAL#fred_vix", now, datetime(2026, 1, 5, 11, 1, 0, tzinfo=ET), is_new_symbol=False) is True
+
+@pytest.mark.asyncio
+async def test_fmp_rotation_still_gates_correctly_alongside_the_new_cadence_check(monkeypatch):
+    # A symbol whose rotation day is NOT today must be skipped entirely — the generic cadence
+    # check must not override or bypass fmp_is_due_today's decision. get_last_fetch_attempt is
+    # mocked to always return None (which on its own would say "due, never fetched before"),
+    # so this test isolates and proves the rotation gate, not the cadence gate, is what's
+    # actually excluding these calls.
+    called_tools = []
+
+    async def tracking_call_tool(client, server, tool_name, **kwargs):
+        called_tools.append(tool_name)
+        return {"unchanged": True}
+
+    monkeypatch.setattr("src.input_data_agent.call_tool", tracking_call_tool)
+    monkeypatch.setattr("src.input_data_agent.read_tool_result", lambda pk: {"unchanged": True})
+    monkeypatch.setattr("src.input_data_agent.write_tool_result", lambda *a, **k: None)
+    monkeypatch.setattr("src.input_data_agent.append_process_history", lambda *a, **k: None)
+    monkeypatch.setattr("src.input_data_agent.get_last_fetch_attempt", lambda pk: None)
+    monkeypatch.setattr("src.input_data_agent.record_fetch_attempt", lambda *a, **k: None)
+
+    watchlist = ["AAPL", "MSFT", "GOOG"]
+    # Pick a day where AAPL's rotation group is NOT due, per Task 16's fmp_is_due_today.
+    not_due_day = next(
+        d for d in (date(2026, 1, 5) + timedelta(days=i) for i in range(3))
+        if not fmp_is_due_today("AAPL", watchlist, d)
+    )
+    now_utc = datetime.combine(not_due_day, datetime.min.time()) + timedelta(hours=15)
+    now_et = datetime(not_due_day.year, not_due_day.month, not_due_day.day, 10, 0, tzinfo=ET)
+
+    await run_input_data_agent_for_symbol(
+        mcp_client=object(), symbol="AAPL", watchlist=watchlist, is_new_symbol=False,
+        now_utc=now_utc, now_et=now_et,
+    )
+
+    fmp_per_symbol_tool_names = {f.tool_name for f in FETCH_PLAN if f.schedule_key == "fmp" and f.per_symbol}
+    assert not (fmp_per_symbol_tool_names & set(called_tools)), (
+        f"FMP per-symbol tools were called on AAPL's non-rotation day: {fmp_per_symbol_tool_names & set(called_tools)}"
+    )
+```
+
+Add `from unittest.mock import patch` and `timedelta` to this test file's `from datetime import ...` line — `date` is already imported (Step 1), `AsyncMock` is already imported (Step 5).
+
+- [ ] **Step 10: Run to verify all pass**
+
+Run: `cd services/scheduler && pytest tests/unit/test_input_data_agent.py -v`
+Expected: 12 passed
+
+- [ ] **Step 11: Commit**
 
 ```bash
 git add services/scheduler/src/input_data_agent.py services/scheduler/tests/unit/test_input_data_agent.py
-git commit -m "feat: implement Input Data Agent with generalized per-specialist change detection"
+git commit -m "fix: enforce per-provider cadence in Input Data Agent, not just market-hours gating
+
+_is_due previously only checked market/extended hours, so every schedule-driven
+tool without its own rate limiter (finnhub_static, fred_slow, fred_vix, fmp's
+per-symbol tools) was due on every 60s scheduler tick instead of respecting its
+documented daily/hourly cadence (spec §7). Adds last-fetch-attempt tracking
+(common.dynamo.record_fetch_attempt/get_last_fetch_attempt) and an elapsed-time
+check for every schedule type that doesn't already have a dedicated limiter.
+
+Also gives the 7 TradingView-backed per-symbol technical/options tools their own
+technical_options schedule tier (Task 15) instead of reusing finnhub_live's 60s
+cadence, which would have meant up to 180 calls/min against the same fragile,
+circuit-breaker-protected upstream the discovery-tier correction was about."
 ```
 
 ---
