@@ -15,3 +15,10 @@ dev = ["pytest>=8.3", "pytest-asyncio>=0.24", "freezegun>=1.5", "moto[dynamodb,s
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["src"]
