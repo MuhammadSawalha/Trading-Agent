@@ -33,6 +33,11 @@ def test_news_freshness_decays_over_48_hours():
     assert fresh > stale
     assert stale == 2.0 * 0.5 * 1.2  # floor multiplier 0.5, primary-entity multiplier 1.2
 
+def test_news_freshness_decay_is_capped_at_1_for_future_dated_news():
+    now = score_claim({"strength": "moderate", "corroborated": False, "flagged_unreliable": False, "rebutted_undefended": False, "source_type": "news", "news_hours_old": 0, "news_is_primary_entity": True})
+    future = score_claim({"strength": "moderate", "corroborated": False, "flagged_unreliable": False, "rebutted_undefended": False, "source_type": "news", "news_hours_old": -10, "news_is_primary_entity": True})
+    assert future <= now
+
 def test_news_non_primary_entity_discounted():
     primary = score_claim({"strength": "moderate", "corroborated": False, "flagged_unreliable": False, "rebutted_undefended": False, "source_type": "news", "news_hours_old": 0, "news_is_primary_entity": True})
     mentioned = score_claim({"strength": "moderate", "corroborated": False, "flagged_unreliable": False, "rebutted_undefended": False, "source_type": "news", "news_hours_old": 0, "news_is_primary_entity": False})

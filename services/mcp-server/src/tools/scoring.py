@@ -39,7 +39,7 @@ def score_claim(claim: Claim) -> float:
 
     if claim.get("source_type") == "news":
         hours_old = claim.get("news_hours_old") or 0.0
-        decay = max(_NEWS_FRESHNESS_FLOOR, 1.0 - hours_old / _NEWS_FRESHNESS_WINDOW_HOURS)
+        decay = max(_NEWS_FRESHNESS_FLOOR, min(1.0, 1.0 - hours_old / _NEWS_FRESHNESS_WINDOW_HOURS))
         score *= decay
         score *= _NEWS_PRIMARY_ENTITY_MULT if claim.get("news_is_primary_entity") else _NEWS_MENTIONED_ENTITY_MULT
 
