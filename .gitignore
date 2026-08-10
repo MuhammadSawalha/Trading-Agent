@@ -1,0 +1,10 @@
+.claude/
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+node_modules/
+dist/
+.env
+.terraform/
+*.tfstate*
