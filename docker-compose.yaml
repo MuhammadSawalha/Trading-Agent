@@ -6,7 +6,9 @@ services:
 
   mcp-server:
     build: ./services/mcp-server
-    env_file: [.env]
+    env_file:
+      - path: .env
+        required: false
     environment:
       DYNAMODB_ENDPOINT: http://dynamodb-local:8000
     ports: ["8001:8001"]
@@ -14,7 +16,9 @@ services:
 
   scheduler:
     build: ./services/scheduler
-    env_file: [.env]
+    env_file:
+      - path: .env
+        required: false
     environment:
       DYNAMODB_ENDPOINT: http://dynamodb-local:8000
       MCP_SERVER_URL: http://mcp-server:8001
@@ -23,7 +27,9 @@ services:
 
   api-backend:
     build: ./services/api-backend
-    env_file: [.env]
+    env_file:
+      - path: .env
+        required: false
     environment:
       DYNAMODB_ENDPOINT: http://dynamodb-local:8000
       MCP_SERVER_URL: http://mcp-server:8001
