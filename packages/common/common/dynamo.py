@@ -7,6 +7,18 @@ import boto3
 
 _OFFLOAD_THRESHOLD_BYTES = 300_000
 
+def _to_utc(dt: datetime) -> datetime:
+    """Normalize a datetime to an aware, UTC datetime.
+
+    Naive datetimes are treated as already being UTC (rather than local time,
+    which is what `.timestamp()`/`.isoformat()` would otherwise silently
+    assume). Aware datetimes are converted to UTC so stored/queried
+    timestamps are always directly comparable as strings or as datetimes.
+    """
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
 def _dynamo_resource():
     kwargs = {"region_name": os.environ.get("AWS_REGION", "us-east-1")}
     if endpoint := os.environ.get("DYNAMODB_ENDPOINT"):
@@ -61,6 +73,7 @@ def read_agent_output(symbol: str, agent_name: str) -> dict | None:
     return json.loads(item["payload"]) if item else None
 
 def append_process_history(symbol: str, agent: str, reason: str, status: str, timestamp: datetime) -> None:
+    timestamp = _to_utc(timestamp)
     table = _dynamo_resource().Table("ProcessHistory")
     sk = f"{timestamp.isoformat()}#{agent}"
     table.put_item(Item={
@@ -75,7 +88,8 @@ def query_process_history(symbol: str, since: datetime | None = None) -> list[di
     )
     items = sorted(response["Items"], key=lambda i: i["sk"])
     if since is not None:
-        items = [i for i in items if i["timestamp"] >= since.isoformat()]
+        since_utc = _to_utc(since).isoformat()
+        items = [i for i in items if i["timestamp"] >= since_utc]
     return items
 
 _FETCH_ATTEMPT_TTL_SECONDS = 7 * 86400  # generous fixed window, independent of any tool's own cadence
@@ -85,6 +99,7 @@ def record_fetch_attempt(pk: str, timestamp: datetime) -> None:
     fetched value actually changed. This is deliberately separate from write_tool_result,
     which only writes on a diff — cadence enforcement (Task 16's _is_due) needs "when did we
     last try" even when the value has been stable for a while and nothing gets rewritten."""
+    timestamp = _to_utc(timestamp)
     table = _dynamo_resource().Table("ToolResults")
     expires_at = int(timestamp.timestamp()) + _FETCH_ATTEMPT_TTL_SECONDS
     table.put_item(Item={"pk": f"{pk}#LAST_ATTEMPT", "attempted_at": timestamp.isoformat(), "expires_at": expires_at})
