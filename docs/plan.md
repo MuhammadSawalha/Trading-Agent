@@ -2006,13 +2006,15 @@ def test_discovery_has_no_separate_extended_tier_reuses_regular_cadence_througho
     # not Marketaux's separate 90-min pre/after-hours tier.
     assert SCHEDULES["discovery"].cadence_seconds_extended == SCHEDULES["discovery"].cadence_seconds_regular
 
-def test_technical_options_schedule_is_not_finnhub_lives_aggressive_60s_cadence():
-    # TradingView-backed per-symbol technicals/options are a different provider with a
-    # different constraint than Finnhub's quote polling (no per-minute quota of its own, but
-    # a real shared, fragile upstream behind the circuit breaker) — reusing finnhub_live's
-    # 60s cadence here would mean up to 30 symbols x 6 tools = 180 calls/min against that
-    # shared dependency, which is exactly what the circuit breaker exists to protect against.
-    assert SCHEDULES["technical_options"].cadence_seconds_regular == 300
+def test_technical_options_schedule_matches_discovery_tier_precedent_not_finnhub_live():
+    # TradingView-backed per-symbol technicals/options depend on the same circuit-breaker-
+    # protected TradingView scanner infrastructure as the discovery tier (spec §7) — the risk
+    # is total daily call volume against that one fragile shared dependency, not burst rate
+    # (the sliding-window limiter already caps bursts regardless of which tier a tool is on).
+    # 7 tools x 30 symbols at 5-min cadence is 40,000+ calls/day; at 30-min it's ~10,000/day,
+    # matching the same reasoning and number already established for the discovery tier and
+    # Marketaux's regular-hours cadence — reused here rather than introducing a new one.
+    assert SCHEDULES["technical_options"].cadence_seconds_regular == SCHEDULES["discovery"].cadence_seconds_regular == 1800
     assert SCHEDULES["technical_options"].cadence_seconds_regular != SCHEDULES["finnhub_live"].cadence_seconds_regular
 ```
 
@@ -2058,10 +2060,14 @@ SCHEDULES: dict[str, ProviderSchedule] = {
     "fred_vix": ProviderSchedule(cadence_seconds_regular=3600, cadence_seconds_extended=None, active_overnight=False),
     # TradingView-backed per-symbol technicals/options (Full Technical Analysis, Options
     # Chain, etc., Task 16): a different provider from Finnhub, with no per-minute quota of
-    # its own but a real shared, fragile upstream — protected by the circuit breaker (Task 5),
-    # not a quota. 5-min cadence during extended hours keeps per-symbol call volume against
-    # that shared dependency reasonable without needing near-real-time freshness.
-    "technical_options": ProviderSchedule(cadence_seconds_regular=300, cadence_seconds_extended=None, active_overnight=False),
+    # its own but the same circuit-breaker-protected, fragile shared upstream as the discovery
+    # tier below (Task 5) — the risk here is total daily call volume against that one
+    # dependency, not burst rate (the sliding-window limiter already caps bursts independent
+    # of schedule tier). No stated reason per-symbol technicals need fresher data than
+    # discovery's market-wide context does, so this reuses the same 30-min number already
+    # established for the discovery tier and Marketaux's regular-hours cadence, rather than
+    # introducing a new one.
+    "technical_options": ProviderSchedule(cadence_seconds_regular=1800, cadence_seconds_extended=None, active_overnight=False),
     # Discovery tier: flat 30-min cadence across the whole 4am-8pm extended window, reusing
     # Marketaux's regular-hours number per spec §7 rather than introducing a separate tier.
     "discovery": ProviderSchedule(cadence_seconds_regular=1800, cadence_seconds_extended=1800, active_overnight=False),
@@ -2197,10 +2203,11 @@ FETCH_PLAN: list[FetchSpec] = [
     FetchSpec("finnhub_company_news", "own", "sentiment", "finnhub_live", True, is_news=True),
     # Technical — Finnhub quote uses finnhub_live (its own per-minute quota, sliding-window
     # limited). TradingView-backed per-symbol technicals are a DIFFERENT provider with no
-    # per-minute quota of its own but a real shared, fragile upstream (spec §7) — they get
-    # their own "technical_options" cadence tier (Task 15), not finnhub_live's, since reusing
-    # Finnhub's 60s cadence here would mean up to 30 symbols x 6 tools = 180 calls/min against
-    # that shared dependency. Still protected by the shared circuit breaker since server != "own".
+    # per-minute quota of its own but the same circuit-breaker-protected shared upstream as
+    # the discovery tier (spec §7) — they get their own "technical_options" cadence tier
+    # (Task 15, 30 min, matching the discovery-tier/Marketaux precedent), not finnhub_live's,
+    # since the risk against that shared dependency is total daily call volume, not burst
+    # rate. Still protected by the shared circuit breaker since server != "own".
     FetchSpec("finnhub_quote", "own", "technical", "finnhub_live", True),
     FetchSpec("full_technical_analysis", "tradingview", "technical", "technical_options", True),
     FetchSpec("multi_timeframe_analysis", "tradingview", "technical", "technical_options", True),
@@ -2208,7 +2215,7 @@ FETCH_PLAN: list[FetchSpec] = [
     FetchSpec("candlestick_pattern_analysis", "tradingview", "technical", "technical_options", True),
     FetchSpec("tradingview_technicals", "stock_scanner", "technical", "technical_options", True),
     # Macro/Options — FRED series (global, not per-symbol) + TradingView options (per-symbol,
-    # same technical_options cadence tier as the technicals above, for the same reason)
+    # same 30-min technical_options cadence tier as the technicals above, for the same reason)
     FetchSpec("fred_federal_funds_rate", "own", "macro_options", "fred_slow", False),
     FetchSpec("fred_10y_treasury_yield", "own", "macro_options", "fred_slow", False),
     FetchSpec("fred_2y_treasury_yield", "own", "macro_options", "fred_slow", False),
@@ -2308,7 +2315,7 @@ logger = logging.getLogger(__name__)
 
 _TTL_SECONDS = {
     "marketaux": 1800, "fmp": 3 * 86400, "finnhub_static": 86400,
-    "finnhub_live": 60, "fred_slow": 86400, "fred_vix": 3600, "technical_options": 300,
+    "finnhub_live": 60, "fred_slow": 86400, "fred_vix": 3600, "technical_options": 1800,
 }
 
 @dataclass
@@ -2517,8 +2524,11 @@ check for every schedule type that doesn't already have a dedicated limiter.
 
 Also gives the 7 TradingView-backed per-symbol technical/options tools their own
 technical_options schedule tier (Task 15) instead of reusing finnhub_live's 60s
-cadence, which would have meant up to 180 calls/min against the same fragile,
-circuit-breaker-protected upstream the discovery-tier correction was about."
+cadence, since they depend on the same circuit-breaker-protected TradingView
+scanner infrastructure as the discovery tier and the risk is total daily call
+volume against that shared dependency, not burst rate. Set to 30 minutes,
+reusing the same number and reasoning already established for the discovery
+tier and Marketaux's regular-hours cadence rather than introducing a new one."
 ```
 
 ---
