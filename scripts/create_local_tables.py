@@ -1,7 +1,20 @@
-import boto3
 import sys
-sys.path.insert(0, "services/mcp-server")
+from pathlib import Path
+
+import boto3
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services/mcp-server"))
 from src.dynamo_schema import TABLE_DEFINITIONS
+
+
+def ensure_ttl(client, name):
+    desc = client.describe_time_to_live(TableName=name)
+    if desc["TimeToLiveDescription"]["TimeToLiveStatus"] in ("DISABLED", "DISABLING"):
+        client.update_time_to_live(
+            TableName=name,
+            TimeToLiveSpecification={"Enabled": True, "AttributeName": "expires_at"},
+        )
+
 
 def main():
     client = boto3.client(
@@ -15,12 +28,10 @@ def main():
             continue
         client.create_table(**definition)
         client.get_waiter("table_exists").wait(TableName=name)
-        if name == "ToolResults":
-            client.update_time_to_live(
-                TableName=name,
-                TimeToLiveSpecification={"Enabled": True, "AttributeName": "expires_at"},
-            )
         print(f"{name}: created")
+
+    ensure_ttl(client, "ToolResults")
+
 
 if __name__ == "__main__":
     main()
