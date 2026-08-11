@@ -1,4 +1,4 @@
-from unittest.mock import patch
+from unittest.mock import patch, AsyncMock
 from src.graph.build_graph import build_graph
 
 def test_graph_nodes_include_all_pipeline_stages():
@@ -18,6 +18,8 @@ def test_manager_runs_after_risk():
     edges = {(e.source, e.target) for e in graph.get_graph().edges}
     assert ("risk", "manager") in edges
 
+@patch("src.graph.manager.write_agent_output")
+@patch("src.graph.manager.call_tool", new_callable=AsyncMock)
 @patch("src.graph.risk._invoke_risk_llm")
 @patch("src.graph.debate._invoke_bear_rebuttal_llm")
 @patch("src.graph.debate._invoke_bear_llm")
@@ -26,7 +28,7 @@ def test_manager_runs_after_risk():
 @patch("src.graph.specialists.append_process_history")
 @patch("src.graph.specialists.write_agent_output")
 @patch("src.graph.specialists.read_agent_output")
-def test_compiled_graph_executes_without_error(mock_read, mock_write, mock_append, mock_invoke, mock_bull, mock_bear, mock_rebuttal, mock_risk):
+async def test_compiled_graph_executes_without_error(mock_read, mock_write, mock_append, mock_invoke, mock_bull, mock_bear, mock_rebuttal, mock_risk, mock_call_tool, mock_manager_write):
     # Mock DynamoDB operations and LLM calls to avoid AWS dependencies
     mock_read.return_value = None  # Cache miss for all specialists
     mock_invoke.return_value = {"claims": [{"strength": "moderate", "corroborated": True, "flagged_unreliable": False, "rebutted_undefended": False, "source_type": "other", "rationale": "test"}]}
@@ -34,9 +36,10 @@ def test_compiled_graph_executes_without_error(mock_read, mock_write, mock_appen
     mock_bear.return_value = [{"strength": "moderate", "corroborated": False, "flagged_unreliable": False, "rebutted_undefended": False, "source_type": "other", "rationale": "bear test"}]
     mock_rebuttal.return_value = {"rebutted_claim_indices": [], "succeeded_indices": []}
     mock_risk.return_value = {"risk_level": "medium", "does_not_take_a_directional_stance": True, "rationale": "moderate risk"}
+    mock_call_tool.return_value = {"net_score": 0.0, "confidence": 0.0, "label": "Neutral, no confidence"}
 
     graph = build_graph()
-    result = graph.invoke({"symbol": "AAPL"})
+    result = await graph.ainvoke({"symbol": "AAPL", "mcp_client": object()})
     assert result is not None
     assert result.get("symbol") == "AAPL"
     assert {"fundamentals", "technical", "sentiment", "macro_options"} <= result.keys()

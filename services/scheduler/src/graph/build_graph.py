@@ -3,6 +3,7 @@ from .state import GraphState
 from .specialists import make_specialist_node, FUNDAMENTALS_PROMPT, TECHNICAL_PROMPT, SENTIMENT_PROMPT, MACRO_OPTIONS_PROMPT
 from .debate import bull_node, bear_node
 from .risk import risk_node
+from .manager import manager_node
 
 def _stub(name: str):
     def node(state: GraphState) -> dict:
@@ -19,11 +20,11 @@ def build_graph():
     builder.add_node("sentiment", make_specialist_node("sentiment", SENTIMENT_PROMPT))
     builder.add_node("macro_options", make_specialist_node("macro_options", MACRO_OPTIONS_PROMPT))
 
-    # Add debate and remaining stub nodes (risk, manager)
+    # Add debate and remaining nodes (risk, manager)
     builder.add_node("bull", bull_node)
     builder.add_node("bear", bear_node)
     builder.add_node("risk", risk_node)
-    builder.add_node("manager", _stub("manager"))
+    builder.add_node("manager", manager_node)
 
     for specialist in ["fundamentals", "technical", "sentiment", "macro_options"]:
         builder.add_edge(START, specialist)
