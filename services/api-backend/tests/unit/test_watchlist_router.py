@@ -21,6 +21,17 @@ def test_add_rejects_invalid_symbol(mock_call_tool, mock_add):
     assert response.status_code == 422
     mock_add.assert_not_called()
 
+@patch("src.routers.watchlist.add_to_watchlist")
+@patch("src.routers.watchlist.call_own_tool", new_callable=AsyncMock)
+def test_add_returns_503_when_symbol_validation_is_unavailable(mock_call_tool, mock_add):
+    # An unreachable MCP server is not evidence of a bad ticker: it must be a
+    # distinct, retryable 503 rather than an unhandled 500 or a wrong 422.
+    mock_call_tool.side_effect = RuntimeError("MCP server unreachable")
+    client = TestClient(create_app())
+    response = client.post("/watchlist/AAPL")
+    assert response.status_code == 503
+    mock_add.assert_not_called()
+
 @patch("src.routers.watchlist.remove_from_watchlist")
 def test_remove(mock_remove):
     client = TestClient(create_app())
