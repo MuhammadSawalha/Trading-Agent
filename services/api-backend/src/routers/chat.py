@@ -2,7 +2,7 @@ import logging
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
-from starlette.concurrency import run_in_threadpool
+from fastapi.concurrency import run_in_threadpool
 from langchain_aws import ChatBedrockConverse
 from ..chat.grounding import build_context
 from ..mcp_client import call_own_tool

@@ -1,5 +1,6 @@
 import asyncio
 import json
+from datetime import datetime
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from common.dynamo import query_process_history, read_watchlist, read_tool_result
@@ -14,16 +15,23 @@ _NEWS_POLL_INTERVAL_SECONDS = 1.5
 _KEEPALIVE_FRAME = ": keepalive\n\n"
 
 async def _symbol_event_generator(symbol: str, max_polls: int | None):
-    last_seen_sk = None
+    last_seen_timestamp = None
     polls = 0
     while max_polls is None or polls < max_polls:
         # query_process_history is a synchronous, blocking boto3 call. Called
         # directly it would block uvicorn's single event-loop thread on every
         # poll for the whole lifetime of every connected client, stalling all
         # other in-flight requests and streams on this pod.
-        entries = await asyncio.to_thread(query_process_history, symbol)
-        new_entries = entries if last_seen_sk is None else [
-            e for e in entries if e.get("timestamp", "") > last_seen_sk
+        #
+        # Passing `since` lets DynamoDB itself bound the read to entries at-or-after
+        # the last-seen timestamp instead of re-fetching the symbol's entire history
+        # on every 1.5s poll for the connection's whole lifetime. The `since` bound is
+        # inclusive, so the last-seen entry itself is expected to come back; the
+        # `new_entries` filter below is what excludes it from being re-emitted.
+        since = datetime.fromisoformat(last_seen_timestamp) if last_seen_timestamp else None
+        entries = await asyncio.to_thread(query_process_history, symbol, since=since)
+        new_entries = entries if last_seen_timestamp is None else [
+            e for e in entries if e.get("timestamp", "") > last_seen_timestamp
         ]
         for entry in new_entries:
             # The `id:` field gives clients standard SSE reconnect support via
@@ -33,7 +41,7 @@ async def _symbol_event_generator(symbol: str, max_polls: int | None):
         if not new_entries:
             yield _KEEPALIVE_FRAME
         if entries:
-            last_seen_sk = entries[-1]["timestamp"]
+            last_seen_timestamp = entries[-1]["timestamp"]
         polls += 1
         await asyncio.sleep(_POLL_INTERVAL_SECONDS)
 

@@ -7,6 +7,7 @@ from common.dynamo import (
     read_tool_result, write_tool_result,
     read_agent_output, write_agent_output,
     append_process_history, query_process_history,
+    get_latest_process_history_entry,
     record_fetch_attempt, get_last_fetch_attempt,
     ensure_tables_for_test,
 )
@@ -72,13 +73,18 @@ def test_process_history_append_and_query_ordered(aws):
     assert [e["status"] for e in entries] == ["started", "finished"]
 
 def test_process_history_query_since_filters_older_entries(aws):
+    # A mix of timestamps straddling `since`, including one exactly *at* the
+    # boundary, verifies the DB-level `Key("sk").gte(...)` bound behaves like the
+    # old client-side `>=` filter: strictly-older entries are dropped, and the
+    # at-or-after entries (including the exact-boundary one) are kept.
     t1 = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    since = datetime(2026, 1, 1, 12, 30, tzinfo=timezone.utc)
     t2 = datetime(2026, 1, 1, 13, 0, tzinfo=timezone.utc)
     append_process_history("AAPL", "Risk", reason="scheduled", status="finished", timestamp=t1)
+    append_process_history("AAPL", "Risk", reason="scheduled", status="started", timestamp=since)
     append_process_history("AAPL", "Risk", reason="scheduled", status="finished", timestamp=t2)
-    entries = query_process_history("AAPL", since=datetime(2026, 1, 1, 12, 30, tzinfo=timezone.utc))
-    assert len(entries) == 1
-    assert entries[0]["timestamp"] == t2.isoformat()
+    entries = query_process_history("AAPL", since=since)
+    assert [e["timestamp"] for e in entries] == [since.isoformat(), t2.isoformat()]
 
 def test_process_history_query_since_matches_same_instant_in_different_offset(aws):
     # Entry is stored using a UTC timestamp.
@@ -123,6 +129,19 @@ def test_process_history_query_drains_all_pages(aws):
     last_timestamp = (datetime(2026, 1, 1, tzinfo=timezone.utc)
                       + timedelta(minutes=expected_count - 1)).isoformat()
     assert entries[-1]["timestamp"] == last_timestamp
+
+def test_get_latest_process_history_entry_returns_newest(aws):
+    t1 = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    t2 = datetime(2026, 1, 1, 13, 0, tzinfo=timezone.utc)
+    t3 = datetime(2026, 1, 1, 9, 0, tzinfo=timezone.utc)  # written out of order
+    append_process_history("AAPL", "Risk", reason="scheduled", status="finished", timestamp=t1)
+    append_process_history("AAPL", "Risk", reason="scheduled", status="finished", timestamp=t2)
+    append_process_history("AAPL", "Risk", reason="scheduled", status="finished", timestamp=t3)
+    entry = get_latest_process_history_entry("AAPL")
+    assert entry["timestamp"] == t2.isoformat()
+
+def test_get_latest_process_history_entry_returns_none_when_empty(aws):
+    assert get_latest_process_history_entry("MSFT") is None
 
 def test_last_fetch_attempt_is_none_before_any_attempt(aws):
     assert get_last_fetch_attempt("AAPL#finnhub_company_profile") is None

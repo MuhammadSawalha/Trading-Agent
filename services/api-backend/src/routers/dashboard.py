@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from common.dynamo import read_tool_result, read_agent_output, query_process_history, read_watchlist
+from common.dynamo import read_tool_result, read_agent_output, query_process_history, read_watchlist, get_latest_process_history_entry
 
 router = APIRouter(tags=["dashboard"])
 _AGENT_NAMES = ["Fundamentals", "Technical", "Sentiment", "Macro_Options", "Bull", "Bear", "Risk", "Manager"]
@@ -16,8 +16,8 @@ async def watchlist_dashboard():
     rows = []
     for symbol in read_watchlist():
         verdict = read_agent_output(symbol, "Manager") or {}
-        history = query_process_history(symbol)
-        last_updated = history[-1]["timestamp"] if history else None
+        latest = get_latest_process_history_entry(symbol)
+        last_updated = latest["timestamp"] if latest else None
         # Spec 8.1 requires price and % change on every row. The scheduler
         # caches Finnhub's real-time quote per symbol; `c` is the current price
         # and `dp` the percent change. A symbol whose quote is not cached yet
