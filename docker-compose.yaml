@@ -5,7 +5,9 @@ services:
     command: ["-jar", "DynamoDBLocal.jar", "-inMemory", "-sharedDb"]
 
   mcp-server:
-    build: ./services/mcp-server
+    build:
+      context: .
+      dockerfile: services/mcp-server/Dockerfile
     env_file:
       - path: .env
         required: false
