@@ -359,10 +359,10 @@ project already integrates with. 35 tools (§3). Deployed independently
 **1. Scheduled pipeline run**
 Scheduler tick → Input Data Agent checks `ToolResults` cache per §7 →
 live tool calls only where due → news-diff gate decides whether to
-proceed → if proceeding: four specialists (parallel) → Bull/Bear
-(parallel, with Bear's rebuttal round) → Risk → Manager (calls scoring
-tool) → results written to `AgentOutputs`, transitions appended to
-`ProcessHistory` throughout.
+proceed → if proceeding: four specialists (parallel) → Bull, then Bear
+(sequential — Bear's rebuttal round needs Bull's completed claims), then
+Risk → Manager (calls scoring tool) → results written to `AgentOutputs`,
+transitions appended to `ProcessHistory` throughout.
 
 **2. New symbol added**
 User adds ticker in UI → API Backend validates via Company Profile call →

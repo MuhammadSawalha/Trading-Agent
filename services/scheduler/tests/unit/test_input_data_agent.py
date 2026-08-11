@@ -1,5 +1,7 @@
+import json
 from datetime import date, timedelta
 from unittest.mock import patch
+from langchain_core.messages import ToolMessage
 from src.input_data_agent import diff_changed, fmp_is_due_today, FETCH_PLAN
 
 def test_diff_changed_news_uses_uuid_set():
@@ -185,11 +187,18 @@ async def test_third_party_failure_trips_shared_breaker_without_aborting_the_sym
     monkeypatch.setattr("src.input_data_agent.get_last_fetch_attempt", lambda pk: None)
 
     class FakeTool:
+        """Mimics a langchain_mcp_adapters tool: invoked with a ToolCall, it returns a
+        ToolMessage carrying the MCP structuredContent in `artifact`."""
         def __init__(self, name, result):
             self.name = name
             self._result = result
-        async def ainvoke(self, kwargs):
-            return self._result
+        async def ainvoke(self, tool_call):
+            return ToolMessage(
+                content=[{"type": "text", "text": json.dumps(self._result)}],
+                artifact={"structured_content": self._result},
+                name=self.name,
+                tool_call_id=tool_call["id"],
+            )
 
     class FakeMCPClient:
         async def get_tools(self, *, server_name):

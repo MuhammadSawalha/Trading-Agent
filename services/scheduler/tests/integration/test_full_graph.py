@@ -1,5 +1,4 @@
 import pytest
-from unittest.mock import AsyncMock
 from src.graph.build_graph import build_graph
 
 
@@ -26,6 +25,10 @@ async def test_full_pipeline_executes_in_dependency_order(monkeypatch):
     monkeypatch.setattr("src.graph.specialists.read_agent_output", lambda *a: None)
     monkeypatch.setattr("src.graph.specialists.write_agent_output", lambda *a, **k: None)
     monkeypatch.setattr("src.graph.specialists.append_process_history", lambda *a, **k: None)
+    monkeypatch.setattr("src.graph.debate.write_agent_output", lambda *a, **k: None)
+    monkeypatch.setattr("src.graph.debate.append_process_history", lambda *a, **k: None)
+    monkeypatch.setattr("src.graph.risk.write_agent_output", lambda *a, **k: None)
+    monkeypatch.setattr("src.graph.risk.append_process_history", lambda *a, **k: None)
     monkeypatch.setattr("src.graph.debate._invoke_bull_llm", track("bull", []))
     monkeypatch.setattr("src.graph.debate._invoke_bear_llm", track("bear", []))
     monkeypatch.setattr(
@@ -67,3 +70,9 @@ async def test_full_pipeline_executes_in_dependency_order(monkeypatch):
     assert last_specialist_idx < bull_idx
     assert bull_idx < bear_idx < bear_rebuttal_idx < risk_idx
     assert risk_idx < manager_idx
+
+    # Exact fire-counts, not just relative order: an order-only check cannot see a node
+    # running twice (the historical risk double-fire caused by a stray bull->risk edge).
+    assert execution_order.count("specialist") == 4
+    for node_name in ("bull", "bear", "bear_rebuttal", "risk", "manager"):
+        assert execution_order.count(node_name) == 1

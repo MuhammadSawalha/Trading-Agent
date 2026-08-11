@@ -5,12 +5,6 @@ from .debate import bull_node, bear_node
 from .risk import risk_node
 from .manager import manager_node
 
-def _stub(name: str):
-    def node(state: GraphState) -> dict:
-        return {}
-    node.__name__ = name
-    return node
-
 def build_graph():
     builder = StateGraph(GraphState)
 

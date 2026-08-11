@@ -6,6 +6,15 @@ from .state import GraphState, SpecialistOutput
 from common.dynamo import read_agent_output, write_agent_output, append_process_history
 from datetime import datetime, timezone
 
+# Graph node / GraphState keys stay lowercase; the Dynamo AgentOutputs / ProcessHistory
+# rows use the capitalized display name, matching "Manager"/"Bull"/"Bear"/"Risk" elsewhere.
+_DISPLAY_NAMES = {
+    "fundamentals": "Fundamentals",
+    "technical": "Technical",
+    "sentiment": "Sentiment",
+    "macro_options": "Macro_Options",
+}
+
 class ClaimModel(BaseModel):
     strength: Literal["strong", "moderate", "weak"]
     corroborated: bool
@@ -68,20 +77,22 @@ MACRO_OPTIONS_PROMPT = (
 )
 
 def make_specialist_node(name: str, system_prompt: str):
+    display_name = _DISPLAY_NAMES[name]
+
     def node(state: GraphState) -> dict:
         symbol = state["symbol"]
         if not state.get("is_new_symbol") and name not in state.get("changed_specialists", set()):
-            cached = read_agent_output(symbol, name)
+            cached = read_agent_output(symbol, display_name)
             if cached is not None:
                 return {name: cached}
 
-        append_process_history(symbol, name, reason="pipeline_run", status="started", timestamp=datetime.now(timezone.utc))
+        append_process_history(symbol, display_name, reason="pipeline_run", status="started", timestamp=datetime.now(timezone.utc))
         try:
             output: SpecialistOutput = _invoke_llm(system_prompt, state.get("tool_data", {}).get(name, {}))
-            write_agent_output(symbol, name, output)
-            append_process_history(symbol, name, reason="pipeline_run", status="finished", timestamp=datetime.now(timezone.utc))
+            write_agent_output(symbol, display_name, output)
+            append_process_history(symbol, display_name, reason="pipeline_run", status="finished", timestamp=datetime.now(timezone.utc))
         except Exception:
-            append_process_history(symbol, name, reason="pipeline_run", status="failed", timestamp=datetime.now(timezone.utc))
+            append_process_history(symbol, display_name, reason="pipeline_run", status="failed", timestamp=datetime.now(timezone.utc))
             raise
         return {name: output}
 

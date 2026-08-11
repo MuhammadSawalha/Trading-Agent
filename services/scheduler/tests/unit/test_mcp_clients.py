@@ -1,5 +1,8 @@
+import json
 import os
 import pytest
+from unittest.mock import AsyncMock
+from langchain_core.tools import StructuredTool
 import src.mcp_clients as mcp_clients
 from src.mcp_clients import build_mcp_client, call_tool
 from src.rate_limit.circuit_breaker import CircuitBreaker
@@ -31,3 +34,46 @@ async def test_get_tools_failure_trips_breaker_for_protected_server(monkeypatch)
         await call_tool(UnreachableServerClient(), "tradingview", "some_tool")
 
     assert fresh_breaker.state == "open"
+
+def _fake_mcp_tool(name: str, content, artifact):
+    """A real StructuredTool built the way langchain_mcp_adapters builds MCP tools —
+    response_format="content_and_artifact" — so call_tool's result extraction is
+    exercised against genuine LangChain machinery rather than a mock."""
+    def fn(**kwargs):
+        """Fake MCP tool for testing call_tool's result extraction."""
+        return (content, artifact)
+    return StructuredTool.from_function(func=fn, name=name, response_format="content_and_artifact")
+
+def _client_serving(tool):
+    client = AsyncMock()
+    client.get_tools = AsyncMock(return_value=[tool])
+    return client
+
+async def test_call_tool_returns_structured_content_from_artifact():
+    # An MCP tool WITH an output schema: structuredContent arrives as the artifact,
+    # which BaseTool discards entirely unless invoked with a ToolCall.
+    payload = {"net_score": 42.0, "confidence": 60.0, "label": "Bullish, moderate confidence"}
+    tool = _fake_mcp_tool(
+        "score_verdict",
+        [{"type": "text", "text": json.dumps(payload)}],
+        {"structured_content": payload},
+    )
+
+    result = await call_tool(_client_serving(tool), "own", "score_verdict", risk_level="low")
+
+    assert result == payload
+
+async def test_call_tool_falls_back_to_json_text_when_tool_has_no_output_schema():
+    # A FastMCP tool annotated bare `-> dict` generates outputSchema: None, so
+    # CallToolResult.structuredContent — and therefore the artifact — is None, and
+    # the payload is JSON-encoded inside a single text content block instead.
+    payload = {"net_score": -12.5, "confidence": 30.0, "label": "Bearish, low confidence"}
+    tool = _fake_mcp_tool(
+        "score_verdict",
+        [{"type": "text", "text": json.dumps(payload)}],
+        None,
+    )
+
+    result = await call_tool(_client_serving(tool), "own", "score_verdict", risk_level="high")
+
+    assert result == payload

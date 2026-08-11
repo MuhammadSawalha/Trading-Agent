@@ -13,6 +13,22 @@ def test_specialists_run_before_bull_and_bear():
     for specialist in ["fundamentals", "technical", "sentiment", "macro_options"]:
         assert any(src == specialist and dst in ("bull", "bear") for src, dst in edges)
 
+def test_debate_topology_is_sequential_bull_then_bear():
+    """Regression guard for the two execution-order bugs fixed during the final review:
+    a direct bull->risk edge (which let risk fire twice) and specialist->bear edges
+    (which let bear run before bull's claims existed)."""
+    graph = build_graph()
+    edges = {(e.source, e.target) for e in graph.get_graph().edges}
+
+    assert ("bull", "risk") not in edges
+    for specialist in ["fundamentals", "technical", "sentiment", "macro_options"]:
+        assert (specialist, "bear") not in edges
+
+    # bear's only incoming edge is from bull
+    assert {src for src, dst in edges if dst == "bear"} == {"bull"}
+    assert ("bull", "bear") in edges
+    assert ("bear", "risk") in edges
+
 def test_manager_runs_after_risk():
     graph = build_graph()
     edges = {(e.source, e.target) for e in graph.get_graph().edges}
@@ -20,7 +36,11 @@ def test_manager_runs_after_risk():
 
 @patch("src.graph.manager.write_agent_output")
 @patch("src.graph.manager.call_tool", new_callable=AsyncMock)
+@patch("src.graph.risk.append_process_history")
+@patch("src.graph.risk.write_agent_output")
 @patch("src.graph.risk._invoke_risk_llm")
+@patch("src.graph.debate.append_process_history")
+@patch("src.graph.debate.write_agent_output")
 @patch("src.graph.debate._invoke_bear_rebuttal_llm")
 @patch("src.graph.debate._invoke_bear_llm")
 @patch("src.graph.debate._invoke_bull_llm")
@@ -28,7 +48,7 @@ def test_manager_runs_after_risk():
 @patch("src.graph.specialists.append_process_history")
 @patch("src.graph.specialists.write_agent_output")
 @patch("src.graph.specialists.read_agent_output")
-async def test_compiled_graph_executes_without_error(mock_read, mock_write, mock_append, mock_invoke, mock_bull, mock_bear, mock_rebuttal, mock_risk, mock_call_tool, mock_manager_write):
+async def test_compiled_graph_executes_without_error(mock_read, mock_write, mock_append, mock_invoke, mock_bull, mock_bear, mock_rebuttal, mock_debate_write, mock_debate_append, mock_risk, mock_risk_write, mock_risk_append, mock_call_tool, mock_manager_write):
     # Mock DynamoDB operations and LLM calls to avoid AWS dependencies
     mock_read.return_value = None  # Cache miss for all specialists
     mock_invoke.return_value = {"claims": [{"strength": "moderate", "corroborated": True, "flagged_unreliable": False, "rebutted_undefended": False, "source_type": "other", "rationale": "test"}]}
