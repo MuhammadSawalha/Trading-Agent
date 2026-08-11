@@ -17,7 +17,9 @@ services:
     depends_on: [dynamodb-local]
 
   scheduler:
-    build: ./services/scheduler
+    build:
+      context: .
+      dockerfile: services/scheduler/Dockerfile
     env_file:
       - path: .env
         required: false
