@@ -155,3 +155,57 @@ async def test_fmp_rotation_still_gates_correctly_alongside_the_new_cadence_chec
     assert not (fmp_per_symbol_tool_names & set(called_tools)), (
         f"FMP per-symbol tools were called on AAPL's non-rotation day: {fmp_per_symbol_tool_names & set(called_tools)}"
     )
+
+import src.mcp_clients as mcp_clients_module
+from src.rate_limit.circuit_breaker import CircuitBreaker
+
+@pytest.mark.asyncio
+async def test_third_party_failure_trips_shared_breaker_without_aborting_the_symbols_own_fetches(monkeypatch):
+    # Every other test in this file monkeypatches src.input_data_agent.call_tool itself, which
+    # bypasses mcp_clients.call_tool entirely -- none of them ever actually reach the shared
+    # circuit breaker. This test goes through the REAL call_tool (imported into
+    # src.input_data_agent, not mocked out there) so a tradingview/stock_scanner failure is
+    # observed tripping the real breaker, and proves the widened try/except in
+    # run_input_data_agent_for_symbol catches CircuitOpenError/any other exception on one
+    # spec the same way it catches a plain call_tool failure, without aborting the rest of
+    # this symbol's FETCH_PLAN run.
+    fresh_breaker = CircuitBreaker(failure_threshold=1, cooldown_seconds=300)
+    monkeypatch.setattr(mcp_clients_module, "_tradingview_breaker", fresh_breaker)
+
+    own_spec = next(f for f in FETCH_PLAN if f.tool_name == "finnhub_company_profile")
+    tv_spec = next(f for f in FETCH_PLAN if f.tool_name == "full_technical_analysis")
+    # Restrict FETCH_PLAN to just these two specs for this test so the assertions are about
+    # this one own/tradingview pair, not about all 38 entries' due-ness this tick.
+    monkeypatch.setattr("src.input_data_agent.FETCH_PLAN", [tv_spec, own_spec])
+
+    monkeypatch.setattr("src.input_data_agent.read_tool_result", lambda pk: None)
+    monkeypatch.setattr("src.input_data_agent.write_tool_result", lambda *a, **k: None)
+    monkeypatch.setattr("src.input_data_agent.append_process_history", lambda *a, **k: None)
+    monkeypatch.setattr("src.input_data_agent.record_fetch_attempt", lambda *a, **k: None)
+    monkeypatch.setattr("src.input_data_agent.get_last_fetch_attempt", lambda pk: None)
+
+    class FakeTool:
+        def __init__(self, name, result):
+            self.name = name
+            self._result = result
+        async def ainvoke(self, kwargs):
+            return self._result
+
+    class FakeMCPClient:
+        async def get_tools(self, *, server_name):
+            if server_name == "own":
+                return [FakeTool("finnhub_company_profile", {"ok": True})]
+            # Simulates the tradingview MCP server being unreachable, before any tool list
+            # is ever obtained -- same failure shape as test_mcp_clients.py's breaker test.
+            raise ConnectionError("upstream unreachable")
+
+    assert fresh_breaker.state == "closed"
+
+    result = await run_input_data_agent_for_symbol(
+        mcp_client=FakeMCPClient(), symbol="AAPL", watchlist=["AAPL"], is_new_symbol=True,
+        now_utc=datetime(2026, 1, 5, 15, 0), now_et=datetime(2026, 1, 5, 10, 0, tzinfo=ET),
+    )
+
+    assert fresh_breaker.state == "open"
+    assert "fundamentals" in result.changed_specialists  # own-server spec still succeeded
+    assert "technical" not in result.changed_specialists  # tradingview spec failed, was isolated

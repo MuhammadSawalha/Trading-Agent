@@ -109,31 +109,40 @@ _marketaux_daily_backstop = DailyCapScheduler(daily_cap=100, safety_margin=10)
 
 def _is_due(spec: FetchSpec, pk: str, now_utc: datetime, now_et: datetime, is_new_symbol: bool) -> bool:
     if is_new_symbol:
+        # Still spend a token on the shared limiter/cap for accounting purposes even though
+        # a new symbol's full fetch always proceeds regardless of remaining budget — otherwise
+        # subsequent scheduled ticks under-count real usage against the provider's real quota.
+        if spec.schedule_key == "finnhub_live":
+            _finnhub_live_limiter.allow(now_utc)
+        elif spec.schedule_key == "marketaux":
+            _marketaux_daily_backstop.allow(now_utc)
         return True
+
     schedule = SCHEDULES[spec.schedule_key]
     if not schedule.active_overnight and not is_extended_hours(now_et):
         return False
 
-    if spec.schedule_key == "finnhub_live":
-        return _finnhub_live_limiter.allow(now_utc)  # per-minute budget; false = skip this tick
-    if spec.schedule_key == "marketaux":
-        return _marketaux_daily_backstop.allow(now_utc)  # daily backstop; false = skip until UTC midnight
+    in_extended_only = is_extended_hours(now_et) and not is_regular_market_hours(now_et)
+    if in_extended_only and schedule.cadence_seconds_extended is None:
+        return False  # Task 15's contract: None means "not polled outside regular hours"
+    cadence = schedule.cadence_seconds_extended if in_extended_only else schedule.cadence_seconds_regular
 
-    # Every other schedule-driven tool (fmp, finnhub_static, fred_slow, fred_vix,
-    # technical_options) has no dedicated rate limiter of its own, so cadence is enforced
-    # directly here: has enough time actually elapsed since the last successful fetch attempt?
-    # (This was the bug: previously this function only checked "is it market/extended hours",
-    # which is True on every one of the Scheduler's 60s ticks — meaning finnhub_static's 11
-    # daily tools, for example, would have been called once per minute per symbol instead of
-    # once per day, directly contradicting spec §7's per-provider cadences.)
     last_attempt = get_last_fetch_attempt(pk)
-    if last_attempt is None:
-        return True
-    if schedule.cadence_seconds_extended is not None and is_extended_hours(now_et) and not is_regular_market_hours(now_et):
-        cadence = schedule.cadence_seconds_extended
-    else:
-        cadence = schedule.cadence_seconds_regular
-    return (now_utc - last_attempt).total_seconds() >= cadence
+    cadence_due = last_attempt is None or (now_utc - last_attempt).total_seconds() >= cadence
+    if not cadence_due:
+        return False
+
+    # Cadence says it's time to fetch. For the two providers with their own quota, spend a
+    # token now as an ADDITIONAL veto on top of cadence — not instead of it, and not spent on
+    # every tick regardless of whether cadence says due (that was the bug: previously this
+    # burned budget/window slots every single tick this function was called, independent of
+    # whether SCHEDULES' cadence had actually elapsed).
+    if spec.schedule_key == "finnhub_live":
+        return _finnhub_live_limiter.allow(now_utc)
+    if spec.schedule_key == "marketaux":
+        return _marketaux_daily_backstop.allow(now_utc)
+
+    return True
 
 async def run_input_data_agent_for_symbol(
     mcp_client, symbol: str, watchlist: list[str], is_new_symbol: bool,
@@ -157,25 +166,24 @@ async def run_input_data_agent_for_symbol(
         params = {"symbol": symbol} if spec.per_symbol else {}
         try:
             current = await call_tool(mcp_client, spec.server, spec.tool_name, **params)
+            record_fetch_attempt(pk, now_utc)
+            previous = read_tool_result(pk)
+            if diff_changed(previous, current, is_news=spec.is_news):
+                write_tool_result(pk, current, ttl_seconds=_TTL_SECONDS[spec.schedule_key])
+                result.changed_specialists.add(spec.specialist)
+                append_process_history(
+                    symbol, spec.specialist,
+                    reason="new_symbol" if is_new_symbol else ("news_cascade" if spec.is_news else "scheduled_refresh"),
+                    status="data_changed", timestamp=now_utc,
+                )
         except Exception:
-            # One tool failing (e.g. Marketaux unreachable) must never block the rest of this
-            # symbol's scheduled fetches (spec §10) — skip it, retry on the next tick. Deliberately
-            # do NOT record a fetch attempt here: a failed call shouldn't push the next retry a
-            # full cadence period out, only a successful one should reset that clock.
+            # One tool failing (e.g. Marketaux unreachable, a malformed payload tripping
+            # diff_changed, or a DynamoDB hiccup on read/write) must never block the rest of
+            # this symbol's scheduled fetches (spec §10) — skip it, retry on the next tick.
+            # The whole per-spec sequence lives in this one try so a failure anywhere in it
+            # (not just call_tool) is caught and isolated the same way.
             logger.warning("fetch failed for %s/%s, will retry next tick", symbol, spec.tool_name, exc_info=True)
             continue
-
-        record_fetch_attempt(pk, now_utc)
-        previous = read_tool_result(pk)
-
-        if diff_changed(previous, current, is_news=spec.is_news):
-            write_tool_result(pk, current, ttl_seconds=_TTL_SECONDS[spec.schedule_key])
-            result.changed_specialists.add(spec.specialist)
-            append_process_history(
-                symbol, spec.specialist,
-                reason="new_symbol" if is_new_symbol else ("news_cascade" if spec.is_news else "scheduled_refresh"),
-                status="finished", timestamp=now_utc,
-            )
 
     return result
 
