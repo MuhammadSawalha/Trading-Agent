@@ -161,6 +161,50 @@ async def test_run_forever_seeds_seen_from_existing_manager_output(
     assert previously_seen == {"AAPL", "MSFT"}
 
 @pytest.mark.asyncio
+@patch("src.loop.record_heartbeat")
+@patch("src.loop.read_agent_output")
+@patch("src.loop.read_watchlist")
+@patch("src.loop.scheduler_tick", new_callable=AsyncMock)
+async def test_run_forever_records_a_heartbeat_before_the_first_tick_completes(
+    mock_tick, mock_watchlist, mock_read_agent_output, mock_record_heartbeat
+):
+    # Final review Finding 2: on a cold start, the first tick (discovery fetch + input-data-
+    # agent + full pipeline for every "new" watchlist symbol) can take a long time, and the
+    # existing per-tick record_heartbeat call (after scheduler_tick returns, just before
+    # asyncio.sleep -- unchanged by this fix) doesn't land until that whole first tick
+    # finishes. /healthz would 503 for that entire startup window. A heartbeat recorded
+    # immediately before the `while True:` loop starts closes that gap without weakening the
+    # per-tick call's ability to catch a genuinely hung loop (a tick that never returns still
+    # means no *subsequent* heartbeat lands, so staleness still fires eventually).
+    mock_watchlist.return_value = []
+    mock_read_agent_output.return_value = None
+
+    call_order: list[str] = []
+    mock_record_heartbeat.side_effect = lambda now: call_order.append("heartbeat")
+
+    async def tracked_tick(*args, **kwargs):
+        call_order.append("tick")
+        return set()
+
+    mock_tick.side_effect = tracked_tick
+
+    class _StopLoop(Exception):
+        pass
+
+    async def fake_sleep(seconds):
+        raise _StopLoop()
+
+    with patch("asyncio.sleep", side_effect=fake_sleep):
+        with pytest.raises(_StopLoop):
+            await run_forever(mcp_client=object(), tick_interval_seconds=1)
+
+    # A heartbeat lands before the first tick even starts (pre-loop call), and again after it
+    # completes (the existing, unchanged per-tick call) -- two total by the time sleep is hit.
+    assert call_order[0] == "heartbeat"
+    assert call_order == ["heartbeat", "tick", "heartbeat"]
+    assert mock_record_heartbeat.call_count == 2
+
+@pytest.mark.asyncio
 @patch("src.loop.read_tool_result")
 @patch("src.loop.fetch_discovery_dashboards", new_callable=AsyncMock)
 @patch("src.loop.build_graph")

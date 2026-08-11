@@ -25,7 +25,11 @@ services:
         required: false
     environment:
       DYNAMODB_ENDPOINT: http://dynamodb-local:8000
-      MCP_SERVER_URL: http://mcp-server:8001
+      OWN_MCP_SERVER_URL: http://mcp-server:8001/mcp
+      # tradingview/stock_scanner are third-party MCP servers, not defined in this compose
+      # file -- their real endpoints must be supplied via the root .env (see .env.example).
+      TRADINGVIEW_MCP_URL: ${TRADINGVIEW_MCP_URL:-}
+      STOCK_SCANNER_MCP_URL: ${STOCK_SCANNER_MCP_URL:-}
     ports: ["8002:8002"]
     depends_on: [dynamodb-local, mcp-server]
 

@@ -110,6 +110,12 @@ async def scheduler_tick(mcp_client, now_utc: datetime, now_et: datetime, previo
 
 async def run_forever(mcp_client, tick_interval_seconds: int = 60) -> None:
     seen: set[str] = await asyncio.to_thread(_seed_seen_symbols)
+    # Final review Finding 2: a cold start's first tick (discovery + input-data-agent + full
+    # pipeline for every "new" watchlist symbol) can run long, and /healthz would 503 for that
+    # entire window if the only heartbeat came from inside the loop below (after the first tick
+    # returns). This pre-loop call is purely additive -- it gives the process credit for having
+    # started, while the per-tick call still catches a genuinely hung loop.
+    record_heartbeat(datetime.now(timezone.utc))
     while True:
         now_utc = datetime.now(timezone.utc)
         now_et = now_utc.astimezone(_ET)
