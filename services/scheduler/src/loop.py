@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 from .discovery import fetch_discovery_dashboards
 from .input_data_agent import run_input_data_agent_for_symbol, FETCH_PLAN
 from .graph.build_graph import build_graph
+from .heartbeat import record_heartbeat
 from common.dynamo import read_watchlist, read_tool_result, read_agent_output
 
 logger = logging.getLogger(__name__)
@@ -116,4 +117,5 @@ async def run_forever(mcp_client, tick_interval_seconds: int = 60) -> None:
             seen = await scheduler_tick(mcp_client, now_utc, now_et, seen)
         except Exception:
             logger.exception("scheduler tick failed; will retry next interval")
+        record_heartbeat(now_utc)
         await asyncio.sleep(tick_interval_seconds)
