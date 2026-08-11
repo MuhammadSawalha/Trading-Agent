@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from .routers.watchlist import router as watchlist_router
+from .routers.dashboard import router as dashboard_router
 from .mcp_client import build_own_mcp_client
 
 def create_app() -> FastAPI:
@@ -11,4 +12,5 @@ def create_app() -> FastAPI:
         return {"status": "ok"}
 
     app.include_router(watchlist_router)
+    app.include_router(dashboard_router)
     return app
