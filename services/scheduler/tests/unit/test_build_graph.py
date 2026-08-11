@@ -1,3 +1,4 @@
+from unittest.mock import patch
 from src.graph.build_graph import build_graph
 
 def test_graph_nodes_include_all_pipeline_stages():
@@ -18,7 +19,15 @@ def test_manager_runs_after_risk():
     edges = {(e.source, e.target) for e in graph.get_graph().edges}
     assert ("risk", "manager") in edges
 
-def test_compiled_graph_executes_without_error():
+@patch("src.graph.specialists._invoke_llm")
+@patch("src.graph.specialists.append_process_history")
+@patch("src.graph.specialists.write_agent_output")
+@patch("src.graph.specialists.read_agent_output")
+def test_compiled_graph_executes_without_error(mock_read, mock_write, mock_append, mock_invoke):
+    # Mock DynamoDB operations and LLM calls to avoid AWS dependencies
+    mock_read.return_value = None  # Cache miss for all specialists
+    mock_invoke.return_value = {"claims": [{"strength": "moderate", "corroborated": True, "flagged_unreliable": False, "rebutted_undefended": False, "source_type": "other", "rationale": "test"}]}
+
     graph = build_graph()
     result = graph.invoke({"symbol": "AAPL"})
     assert result is not None

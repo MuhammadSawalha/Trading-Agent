@@ -26,7 +26,6 @@ class SpecialistResponse(BaseModel):
 def _invoke_llm(system_prompt: str, tool_data: dict) -> dict:
     llm = ChatBedrockConverse(
         model="us.anthropic.claude-haiku-4-5-20251001-v1:0",
-        provider="bedrock_converse",
         region_name="us-east-1",
     ).with_structured_output(SpecialistResponse)
     response = llm.invoke([
