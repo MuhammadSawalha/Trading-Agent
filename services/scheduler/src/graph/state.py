@@ -7,6 +7,14 @@ class Claim(TypedDict, total=False):
     rebutted_undefended: bool
     source_type: Literal["news", "volume", "other"]
     rationale: str
+    # Populated only for source_type="news" (Sentiment) / "volume" (Technical) claims — Task 3's
+    # score_claim reads these for the freshness/centrality and log-compressed volume adjustments
+    # (spec §4.5.1). None for every other claim; score_claim treats missing volume/news fields
+    # as "no adjustment" rather than crashing.
+    news_hours_old: float | None
+    news_is_primary_entity: bool | None
+    volume_ratio: float | None
+    avg_volume: float | None
 
 class SpecialistOutput(TypedDict):
     claims: list[Claim]

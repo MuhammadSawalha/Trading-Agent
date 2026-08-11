@@ -11,8 +11,7 @@ def test_specialists_run_before_bull_and_bear():
     graph = build_graph()
     edges = {(e.source, e.target) for e in graph.get_graph().edges}
     for specialist in ["fundamentals", "technical", "sentiment", "macro_options"]:
-        assert any(src == specialist and dst in ("bull", "bear") for src, dst in edges) or \
-               any(src == specialist for src, dst in edges)  # specialist feeds into the debate stage
+        assert any(src == specialist and dst in ("bull", "bear") for src, dst in edges)
 
 def test_manager_runs_after_risk():
     graph = build_graph()
@@ -32,3 +31,4 @@ def test_compiled_graph_executes_without_error(mock_read, mock_write, mock_appen
     result = graph.invoke({"symbol": "AAPL"})
     assert result is not None
     assert result.get("symbol") == "AAPL"
+    assert {"fundamentals", "technical", "sentiment", "macro_options"} <= result.keys()

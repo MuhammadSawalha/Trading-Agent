@@ -1,3 +1,5 @@
+import functools
+from typing import Literal
 from langchain_aws import ChatBedrockConverse
 from pydantic import BaseModel
 from .state import GraphState, SpecialistOutput
@@ -5,11 +7,11 @@ from common.dynamo import read_agent_output, write_agent_output, append_process_
 from datetime import datetime, timezone
 
 class ClaimModel(BaseModel):
-    strength: str
+    strength: Literal["strong", "moderate", "weak"]
     corroborated: bool
     flagged_unreliable: bool
     rebutted_undefended: bool
-    source_type: str
+    source_type: Literal["news", "volume", "other"]
     rationale: str
     # Populated only for source_type="news" (Sentiment) / "volume" (Technical) claims — Task 3's
     # score_claim reads these for the freshness/centrality and log-compressed volume adjustments
@@ -23,11 +25,15 @@ class ClaimModel(BaseModel):
 class SpecialistResponse(BaseModel):
     claims: list[ClaimModel]
 
-def _invoke_llm(system_prompt: str, tool_data: dict) -> dict:
-    llm = ChatBedrockConverse(
+@functools.lru_cache(maxsize=1)
+def _get_llm():
+    return ChatBedrockConverse(
         model="us.anthropic.claude-haiku-4-5-20251001-v1:0",
         region_name="us-east-1",
     ).with_structured_output(SpecialistResponse)
+
+def _invoke_llm(system_prompt: str, tool_data: dict) -> dict:
+    llm = _get_llm()
     response = llm.invoke([
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": f"Data:\n{tool_data}"},
@@ -70,9 +76,13 @@ def make_specialist_node(name: str, system_prompt: str):
                 return {name: cached}
 
         append_process_history(symbol, name, reason="pipeline_run", status="started", timestamp=datetime.now(timezone.utc))
-        output: SpecialistOutput = _invoke_llm(system_prompt, state.get("tool_data", {}).get(name, {}))
-        write_agent_output(symbol, name, output)
-        append_process_history(symbol, name, reason="pipeline_run", status="finished", timestamp=datetime.now(timezone.utc))
+        try:
+            output: SpecialistOutput = _invoke_llm(system_prompt, state.get("tool_data", {}).get(name, {}))
+            write_agent_output(symbol, name, output)
+            append_process_history(symbol, name, reason="pipeline_run", status="finished", timestamp=datetime.now(timezone.utc))
+        except Exception:
+            append_process_history(symbol, name, reason="pipeline_run", status="failed", timestamp=datetime.now(timezone.utc))
+            raise
         return {name: output}
 
     node.__name__ = name
