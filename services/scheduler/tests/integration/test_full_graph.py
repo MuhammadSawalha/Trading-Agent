@@ -44,6 +44,7 @@ async def test_full_pipeline_executes_in_dependency_order(monkeypatch):
         track_async("manager", {"net_score": 0.0, "confidence": 0.0, "label": "Neutral, no confidence"}),
     )
     monkeypatch.setattr("src.graph.manager.write_agent_output", lambda *a, **k: None)
+    monkeypatch.setattr("src.graph.manager.append_process_history", lambda *a, **k: None)
 
     graph = build_graph()
     initial_state = {
