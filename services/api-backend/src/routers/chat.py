@@ -1,8 +1,12 @@
+import logging
+
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 from langchain_aws import ChatBedrockConverse
 from ..chat.grounding import build_context
 from ..mcp_client import call_own_tool
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["chat"])
 _TIMING_KEYWORDS = ["when", "last updated", "why did", "history", "changed"]
@@ -31,7 +35,15 @@ async def chat(body: ChatRequest, request: Request):
     context = build_context(body.symbols)
     history_context = ""
     if any(kw in body.question.lower() for kw in _TIMING_KEYWORDS) and body.symbols:
-        history = await call_own_tool(request.app.state.mcp_client, "query_process_history_tool", symbol=body.symbols[0])
-        history_context = f"Process history for {body.symbols[0]}:\n{history}"
+        try:
+            history = await call_own_tool(request.app.state.mcp_client, "query_process_history_tool", symbol=body.symbols[0])
+            history_context = f"Process history for {body.symbols[0]}:\n{history}"
+        except Exception:
+            logger.warning(
+                "query_process_history_tool call failed for symbol %s; "
+                "falling back to context-only answer",
+                body.symbols[0],
+                exc_info=True,
+            )
     answer = _invoke_chat_llm(body.question, context, history_context)
     return {"answer": answer}
