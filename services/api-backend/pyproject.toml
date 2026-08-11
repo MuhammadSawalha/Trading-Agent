@@ -10,6 +10,7 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "langchain-mcp-adapters>=0.1.0",
+    "langchain-aws>=0.2.0",
     "common @ file:../../packages/common",
 ]
 
