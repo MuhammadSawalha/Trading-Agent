@@ -5,21 +5,55 @@ from zoneinfo import ZoneInfo
 from .discovery import fetch_discovery_dashboards
 from .input_data_agent import run_input_data_agent_for_symbol, FETCH_PLAN
 from .graph.build_graph import build_graph
-from common.dynamo import read_watchlist, read_tool_result
+from common.dynamo import read_watchlist, read_tool_result, read_agent_output
 
 logger = logging.getLogger(__name__)
 _ET = ZoneInfo("America/New_York")
 _graph = None  # built lazily, once, on first tick
 
-def _build_tool_data(symbol: str) -> dict[str, dict]:
-    """Reassembles the per-specialist tool_data dict the graph expects (specialists.py reads
-    state["tool_data"][specialist_name]) by reading back everything run_input_data_agent_for_symbol
-    already wrote to DynamoDB for this symbol's FETCH_PLAN entries. Skips any pk not yet fetched."""
+def _seed_seen_symbols() -> set[str]:
+    """Symbols that already have a Manager verdict have already been through the pipeline at
+    least once, so they're not "new" for run_forever's purposes. Seeding `seen` from this
+    durable state on startup keeps a process restart (deploy, crash, pod reschedule) from
+    treating the whole watchlist as brand-new -- which would bypass cadence/extended-hours
+    gating for every symbol at once (_is_due short-circuits to True for is_new_symbol=True)
+    and fire a large burst of MCP/LLM calls in the first tick after every restart."""
+    return {symbol for symbol in read_watchlist() if read_agent_output(symbol, "Manager") is not None}
+
+def _read_global_tool_data() -> dict[str, dict]:
+    """The per_symbol=False FETCH_PLAN entries (FRED series, fmp_economic_indicators, the FMP
+    calendars, etc.) all resolve to the same GLOBAL#{tool_name} pk regardless of which symbol
+    is being processed -- read them once per tick here rather than once per symbol."""
     tool_data: dict[str, dict] = {}
     for spec in FETCH_PLAN:
-        pk = f"{symbol}#{spec.tool_name}" if spec.per_symbol else f"GLOBAL#{spec.tool_name}"
+        if spec.per_symbol:
+            continue
+        payload = read_tool_result(f"GLOBAL#{spec.tool_name}")
+        if payload is None:
+            logger.debug("no cached result yet for global tool %s (specialist=%s)", spec.tool_name, spec.specialist)
+            continue
+        tool_data.setdefault(spec.specialist, {})[spec.tool_name] = payload
+    return tool_data
+
+def _read_symbol_tool_data(symbol: str, global_tool_data: dict[str, dict]) -> dict[str, dict]:
+    """Reassembles the per-specialist tool_data dict the graph expects (specialists.py reads
+    state["tool_data"][specialist_name]) by reading back this symbol's own per-symbol
+    FETCH_PLAN entries and merging them on top of the tick's already-hoisted global_tool_data
+    (copied per specialist so mutating one symbol's dict never leaks into another's)."""
+    tool_data = {specialist: dict(tools) for specialist, tools in global_tool_data.items()}
+    for spec in FETCH_PLAN:
+        if not spec.per_symbol:
+            continue
+        pk = f"{symbol}#{spec.tool_name}"
         payload = read_tool_result(pk)
         if payload is None:
+            # Expected and self-healing: TTLs match fetch cadences and write_tool_result only
+            # writes on a diff, so a sibling tool-result row can be transiently absent even
+            # while this specialist is in changed_specialists. Not a warning -- just makes a
+            # partial-data specialist run diagnosable from logs after the fact.
+            logger.debug(
+                "no cached result yet for %s/%s (specialist=%s)", symbol, spec.tool_name, spec.specialist
+            )
             continue
         tool_data.setdefault(spec.specialist, {})[spec.tool_name] = payload
     return tool_data
@@ -40,6 +74,7 @@ async def scheduler_tick(mcp_client, now_utc: datetime, now_et: datetime, previo
 
     watchlist = read_watchlist()
     seen = set(previously_seen)
+    global_tool_data: dict[str, dict] | None = None  # computed once, lazily, on first symbol that needs it
 
     for symbol in watchlist:
         is_new = symbol not in seen
@@ -49,11 +84,18 @@ async def scheduler_tick(mcp_client, now_utc: datetime, now_et: datetime, previo
             result = await run_input_data_agent_for_symbol(mcp_client, symbol, watchlist, is_new, now_utc, now_et)
             if not result.changed_specialists:
                 continue
+            if global_tool_data is None:
+                global_tool_data = await asyncio.to_thread(_read_global_tool_data)
+            # read_tool_result is blocking boto3 I/O; run the batch of reads for this symbol in
+            # a worker thread so it doesn't block the event loop for the duration of up to ~26
+            # sequential DynamoDB round-trips (spec: don't make this worse ahead of Task 25's
+            # /healthz sharing this same process/loop).
+            tool_data = await asyncio.to_thread(_read_symbol_tool_data, symbol, global_tool_data)
             await _graph.ainvoke({
                 "symbol": symbol, "mcp_client": mcp_client,
                 "is_new_symbol": result.is_new_symbol,
                 "changed_specialists": result.changed_specialists,
-                "tool_data": _build_tool_data(symbol),
+                "tool_data": tool_data,
             })
         except Exception:
             # One symbol's fetch or pipeline run failing (including a Risk agent that never
@@ -66,7 +108,7 @@ async def scheduler_tick(mcp_client, now_utc: datetime, now_et: datetime, previo
     return seen
 
 async def run_forever(mcp_client, tick_interval_seconds: int = 60) -> None:
-    seen: set[str] = set()
+    seen: set[str] = await asyncio.to_thread(_seed_seen_symbols)
     while True:
         now_utc = datetime.now(timezone.utc)
         now_et = now_utc.astimezone(_ET)
