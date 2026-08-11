@@ -1,7 +1,8 @@
 import logging
 
 from fastapi import APIRouter, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 from langchain_aws import ChatBedrockConverse
 from ..chat.grounding import build_context
 from ..mcp_client import call_own_tool
@@ -12,8 +13,12 @@ router = APIRouter(tags=["chat"])
 _TIMING_KEYWORDS = ["when", "last updated", "why did", "history", "changed"]
 
 class ChatRequest(BaseModel):
-    question: str
-    symbols: list[str]
+    # Bounded because /chat is unauthenticated and build_context does
+    # len(symbols) x 8 sequential blocking reads: without a cap a single
+    # request is a cheap resource-exhaustion lever. 30 matches the
+    # watchlist's own maximum size.
+    question: str = Field(max_length=2000)
+    symbols: list[str] = Field(max_length=30)
 
 def _invoke_chat_llm(question: str, context: str, history_context: str) -> str:
     llm = ChatBedrockConverse(
@@ -45,5 +50,8 @@ async def chat(body: ChatRequest, request: Request):
                 body.symbols[0],
                 exc_info=True,
             )
-    answer = _invoke_chat_llm(body.question, context, history_context)
+    # _invoke_chat_llm blocks on the full Bedrock round-trip (seconds). Called
+    # directly from this async handler it would stall uvicorn's single event
+    # loop, freezing every other request and SSE stream on this pod.
+    answer = await run_in_threadpool(_invoke_chat_llm, body.question, context, history_context)
     return {"answer": answer}
