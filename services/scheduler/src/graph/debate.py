@@ -1,6 +1,7 @@
 from langchain_aws import ChatBedrockConverse
 from pydantic import BaseModel
 from .state import GraphState, Claim
+from .specialists import ClaimModel
 
 def _bedrock_llm():
     return ChatBedrockConverse(
@@ -9,7 +10,7 @@ def _bedrock_llm():
     )
 
 class ClaimListResponse(BaseModel):
-    claims: list[dict]
+    claims: list[ClaimModel]
 
 class RebuttalResponse(BaseModel):
     rebutted_claim_indices: list[int]  # which Bull claims Bear attempted to rebut
@@ -27,7 +28,7 @@ def _invoke_bull_llm(claims: list[Claim]) -> list[dict]:
         {"role": "system", "content": "Construct the strongest bullish case from these specialist claims. Only use claims that support a bullish view."},
         {"role": "user", "content": f"Claims:\n{claims}"},
     ])
-    return response.claims
+    return [c.model_dump() for c in response.claims]
 
 def _invoke_bear_llm(claims: list[Claim]) -> list[dict]:
     llm = _bedrock_llm().with_structured_output(ClaimListResponse)
@@ -35,7 +36,7 @@ def _invoke_bear_llm(claims: list[Claim]) -> list[dict]:
         {"role": "system", "content": "Construct the strongest bearish case from these specialist claims. Only use claims that support a bearish view."},
         {"role": "user", "content": f"Claims:\n{claims}"},
     ])
-    return response.claims
+    return [c.model_dump() for c in response.claims]
 
 def _invoke_bear_rebuttal_llm(bull_claims: list[Claim], bear_claims: list[dict]) -> dict:
     llm = _bedrock_llm().with_structured_output(RebuttalResponse)
@@ -61,7 +62,7 @@ def bear_node(state: GraphState) -> dict:
 
     bull_claims = [dict(c) for c in state.get("bull_claims", [])]
     for idx in rebuttal["succeeded_indices"]:
-        if idx < len(bull_claims):
+        if 0 <= idx < len(bull_claims):
             bull_claims[idx]["rebutted_undefended"] = True
 
     return {"bull_claims": bull_claims, "bear_claims": bear_claims}
