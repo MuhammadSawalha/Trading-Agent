@@ -127,3 +127,67 @@ async def test_finnhub_usa_spending_endpoint():
     result = await client.get("/stock/usa-spending", {"symbol": "AAPL"})
     assert result == {"data": []}
     assert route.calls.last.request.url.params["symbol"] == "AAPL"
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_finnhub_tools_registration():
+    """Verify that register_finnhub_tools registers all 11 expected tools."""
+    from mcp.server.fastmcp import FastMCP
+    from src.tools.finnhub_tools import register_finnhub_tools
+
+    # Mock all Finnhub endpoints to allow the client to initialize without network calls
+    respx.get("https://finnhub.io/api/v1/quote").mock(
+        return_value=httpx.Response(200, json={})
+    )
+    respx.get("https://finnhub.io/api/v1/stock/profile2").mock(
+        return_value=httpx.Response(200, json={})
+    )
+    respx.get("https://finnhub.io/api/v1/stock/peers").mock(
+        return_value=httpx.Response(200, json={})
+    )
+    respx.get("https://finnhub.io/api/v1/stock/metric").mock(
+        return_value=httpx.Response(200, json={})
+    )
+    respx.get("https://finnhub.io/api/v1/calendar/earnings").mock(
+        return_value=httpx.Response(200, json={})
+    )
+    respx.get("https://finnhub.io/api/v1/stock/earnings").mock(
+        return_value=httpx.Response(200, json={})
+    )
+    respx.get("https://finnhub.io/api/v1/stock/insider-transactions").mock(
+        return_value=httpx.Response(200, json={})
+    )
+    respx.get("https://finnhub.io/api/v1/stock/insider-sentiment").mock(
+        return_value=httpx.Response(200, json={})
+    )
+    respx.get("https://finnhub.io/api/v1/stock/lobbying").mock(
+        return_value=httpx.Response(200, json={})
+    )
+    respx.get("https://finnhub.io/api/v1/stock/usa-spending").mock(
+        return_value=httpx.Response(200, json={})
+    )
+    respx.get("https://finnhub.io/api/v1/company-news").mock(
+        return_value=httpx.Response(200, json={})
+    )
+
+    app = FastMCP("test")
+    register_finnhub_tools(app)
+
+    tools = await app.list_tools()
+    tool_names = {tool.name for tool in tools}
+
+    expected_tools = {
+        "finnhub_company_profile",
+        "finnhub_peers",
+        "finnhub_basic_financials",
+        "finnhub_earnings_calendar",
+        "finnhub_earnings_surprises",
+        "finnhub_insider_transactions",
+        "finnhub_insider_sentiment",
+        "finnhub_lobbying_data",
+        "finnhub_usa_spending",
+        "finnhub_company_news",
+        "finnhub_quote",
+    }
+
+    assert tool_names == expected_tools
