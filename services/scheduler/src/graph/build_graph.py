@@ -2,8 +2,8 @@ from langgraph.graph import StateGraph, START, END
 from .state import GraphState
 
 def _stub(name: str):
-    def node(state: GraphState) -> GraphState:
-        return state
+    def node(state: GraphState) -> dict:
+        return {}
     node.__name__ = name
     return node
 

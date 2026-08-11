@@ -17,3 +17,9 @@ def test_manager_runs_after_risk():
     graph = build_graph()
     edges = {(e.source, e.target) for e in graph.get_graph().edges}
     assert ("risk", "manager") in edges
+
+def test_compiled_graph_executes_without_error():
+    graph = build_graph()
+    result = graph.invoke({"symbol": "AAPL"})
+    assert result is not None
+    assert result.get("symbol") == "AAPL"
