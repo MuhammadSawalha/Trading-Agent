@@ -24,9 +24,9 @@ async def call_tool(client: MultiServerMCPClient, server: str, tool_name: str, *
     protected = server in CIRCUIT_BREAKER_PROTECTED_SERVERS
     if protected and not _tradingview_breaker.allow_call(now):
         raise CircuitOpenError(f"circuit open for shared TradingView dependency (server={server})")
-    tools = await client.get_tools(server_name=server)
-    tool = next(t for t in tools if t.name == tool_name)
     try:
+        tools = await client.get_tools(server_name=server)
+        tool = next(t for t in tools if t.name == tool_name)
         result = await tool.ainvoke(kwargs)
     except Exception:
         if protected:
