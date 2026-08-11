@@ -18,7 +18,19 @@ async def watchlist_dashboard():
         verdict = read_agent_output(symbol, "Manager") or {}
         history = query_process_history(symbol)
         last_updated = history[-1]["timestamp"] if history else None
-        rows.append({"symbol": symbol, "verdict": verdict, "last_updated": last_updated})
+        # Spec 8.1 requires price and % change on every row. The scheduler
+        # caches Finnhub's real-time quote per symbol; `c` is the current price
+        # and `dp` the percent change. A symbol whose quote is not cached yet
+        # (or is missing those keys) reports None rather than failing the
+        # whole dashboard.
+        quote = read_tool_result(f"{symbol}#finnhub_quote") or {}
+        rows.append({
+            "symbol": symbol,
+            "price": quote.get("c"),
+            "percent_change": quote.get("dp"),
+            "verdict": verdict,
+            "last_updated": last_updated,
+        })
     return rows
 
 @router.get("/symbols/{symbol}/detail")
