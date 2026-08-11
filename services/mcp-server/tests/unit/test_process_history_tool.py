@@ -1,5 +1,4 @@
 import pytest
-import boto3
 from moto import mock_aws
 from mcp.server.fastmcp import FastMCP
 from datetime import datetime, timezone

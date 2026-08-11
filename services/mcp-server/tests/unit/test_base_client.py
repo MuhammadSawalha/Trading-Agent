@@ -22,3 +22,14 @@ async def test_get_raises_on_http_error():
     client = ProviderClient(base_url="https://example.com", api_key="k", api_key_param="token")
     with pytest.raises(httpx.HTTPStatusError):
         await client.get("/bad")
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_get_error_does_not_leak_api_key():
+    respx.get("https://example.com/bad").mock(return_value=httpx.Response(401))
+    client = ProviderClient(
+        base_url="https://example.com", api_key="SUPERSECRETKEY123", api_key_param="token"
+    )
+    with pytest.raises(httpx.HTTPStatusError) as exc_info:
+        await client.get("/bad")
+    assert "SUPERSECRETKEY123" not in str(exc_info.value)

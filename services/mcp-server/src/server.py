@@ -1,17 +1,17 @@
-import logging
-
 from mcp.server.fastmcp import FastMCP
 
 
 def create_app() -> FastMCP:
-    app = FastMCP("stock-research-mcp-server")
+    # Binds to 0.0.0.0:8001 (rather than FastMCP's 127.0.0.1:8000 default) to
+    # match the Dockerfile's EXPOSE 8001 and docker-compose's port mapping /
+    # MCP_SERVER_URL, and to be reachable from sibling containers rather than
+    # only from localhost inside this container.
+    app = FastMCP("stock-research-mcp-server", host="0.0.0.0", port=8001)
 
-    # FastMCP's __init__ calls configure_logging(), which sets the root
-    # logger to INFO. At that level httpx logs each outgoing request URL,
-    # including the query string -- and ProviderClient.get() puts the
-    # provider API key in the query string. Suppress httpx's own
-    # request-logging so API keys never land in plaintext logs.
-    logging.getLogger("httpx").setLevel(logging.WARNING)
+    # httpx request-logging (which would log full URLs, including the
+    # provider API key ProviderClient.get() puts in the query string) is
+    # suppressed at import time in src/clients/base.py, which every provider
+    # client (and therefore this app) imports.
 
     from .tools.finnhub_tools import register_finnhub_tools
     from .tools.fmp_tools import register_fmp_tools
