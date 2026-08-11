@@ -1,6 +1,7 @@
 from langgraph.graph import StateGraph, START, END
 from .state import GraphState
 from .specialists import make_specialist_node, FUNDAMENTALS_PROMPT, TECHNICAL_PROMPT, SENTIMENT_PROMPT, MACRO_OPTIONS_PROMPT
+from .debate import bull_node, bear_node
 
 def _stub(name: str):
     def node(state: GraphState) -> dict:
@@ -17,15 +18,17 @@ def build_graph():
     builder.add_node("sentiment", make_specialist_node("sentiment", SENTIMENT_PROMPT))
     builder.add_node("macro_options", make_specialist_node("macro_options", MACRO_OPTIONS_PROMPT))
 
-    # Add remaining stub nodes (bull, bear, risk, manager)
-    for name in ["bull", "bear", "risk", "manager"]:
+    # Add debate and remaining stub nodes (risk, manager)
+    builder.add_node("bull", bull_node)
+    builder.add_node("bear", bear_node)
+    for name in ["risk", "manager"]:
         builder.add_node(name, _stub(name))
 
     for specialist in ["fundamentals", "technical", "sentiment", "macro_options"]:
         builder.add_edge(START, specialist)
         builder.add_edge(specialist, "bull")
-        builder.add_edge(specialist, "bear")
 
+    builder.add_edge("bull", "bear")
     builder.add_edge("bull", "risk")
     builder.add_edge("bear", "risk")
     builder.add_edge("risk", "manager")
