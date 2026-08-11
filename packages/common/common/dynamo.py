@@ -82,11 +82,20 @@ def append_process_history(symbol: str, agent: str, reason: str, status: str, ti
     })
 
 def query_process_history(symbol: str, since: datetime | None = None) -> list[dict]:
+    # ProcessHistory is an append-only audit log, so a symbol's history grows without
+    # bound. DynamoDB returns at most 1MB per query page and signals more data with
+    # LastEvaluatedKey; without draining every page this returns only the *oldest*
+    # 1MB, silently freezing every "last updated" consumer on stale data forever.
     table = _dynamo_resource().Table("ProcessHistory")
-    response = table.query(
-        KeyConditionExpression=boto3.dynamodb.conditions.Key("symbol").eq(symbol),
-    )
-    items = sorted(response["Items"], key=lambda i: i["sk"])
+    items = []
+    kwargs = {"KeyConditionExpression": boto3.dynamodb.conditions.Key("symbol").eq(symbol)}
+    while True:
+        response = table.query(**kwargs)
+        items.extend(response["Items"])
+        if "LastEvaluatedKey" not in response:
+            break
+        kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+    items = sorted(items, key=lambda i: i["sk"])
     if since is not None:
         since_utc = _to_utc(since).isoformat()
         items = [i for i in items if i["timestamp"] >= since_utc]

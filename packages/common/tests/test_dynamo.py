@@ -94,6 +94,36 @@ def test_process_history_query_since_matches_same_instant_in_different_offset(aw
     assert len(entries) == 1
     assert entries[0]["timestamp"] == stored.isoformat()
 
+def test_process_history_query_drains_all_pages(aws):
+    # DynamoDB caps a single query response at 1MB and signals more data with
+    # LastEvaluatedKey. A single un-paginated query() therefore returns only the
+    # *oldest* page once a symbol's history grows past 1MB, permanently freezing
+    # every "last updated" consumer on stale data. Write >1MB so the real
+    # response is forced to paginate, and assert nothing is dropped.
+    table = boto3.resource("dynamodb", region_name="us-east-1").Table("ProcessHistory")
+    filler = "x" * 3800  # ~3.8KB/item => 300 items is ~1.1MB, comfortably >1 page
+    expected_count = 300
+    for i in range(expected_count):
+        timestamp = datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(minutes=i)
+        table.put_item(Item={
+            "symbol": "AAPL",
+            "sk": f"{timestamp.isoformat()}#Sentiment",
+            "agent": "Sentiment",
+            "reason": "pipeline_run",
+            "status": "finished",
+            "timestamp": timestamp.isoformat(),
+            "filler": filler,
+        })
+
+    entries = query_process_history("AAPL")
+    assert len(entries) == expected_count
+
+    # The newest entry must be reachable -- this is the exact read every
+    # "last updated" consumer does, and the one truncation silently breaks.
+    last_timestamp = (datetime(2026, 1, 1, tzinfo=timezone.utc)
+                      + timedelta(minutes=expected_count - 1)).isoformat()
+    assert entries[-1]["timestamp"] == last_timestamp
+
 def test_last_fetch_attempt_is_none_before_any_attempt(aws):
     assert get_last_fetch_attempt("AAPL#finnhub_company_profile") is None
 
