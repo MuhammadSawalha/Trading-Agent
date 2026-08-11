@@ -1,8 +1,17 @@
+import logging
+
 from mcp.server.fastmcp import FastMCP
 
 
 def create_app() -> FastMCP:
     app = FastMCP("stock-research-mcp-server")
+
+    # FastMCP's __init__ calls configure_logging(), which sets the root
+    # logger to INFO. At that level httpx logs each outgoing request URL,
+    # including the query string -- and ProviderClient.get() puts the
+    # provider API key in the query string. Suppress httpx's own
+    # request-logging so API keys never land in plaintext logs.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
     from .tools.finnhub_tools import register_finnhub_tools
     from .tools.fmp_tools import register_fmp_tools

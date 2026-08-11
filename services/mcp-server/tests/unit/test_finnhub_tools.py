@@ -1,193 +1,149 @@
+import json
+
 import pytest
 import respx
 import httpx
-import os
-from src.clients.finnhub_client import finnhub_client
+from mcp.server.fastmcp import FastMCP
+from src.tools.finnhub_tools import register_finnhub_tools
+
 
 @pytest.fixture(autouse=True)
 def api_key(monkeypatch):
     monkeypatch.setenv("FINNHUB_API_KEY", "test-key")
 
-@pytest.mark.asyncio
-@respx.mock
-async def test_finnhub_quote_calls_correct_endpoint_with_symbol():
-    respx.get("https://finnhub.io/api/v1/quote").mock(
-        return_value=httpx.Response(200, json={"c": 150.0})
-    )
-    client = finnhub_client()
-    result = await client.get("/quote", {"symbol": "AAPL"})
-    assert result == {"c": 150.0}
 
-@pytest.mark.asyncio
-@respx.mock
-async def test_finnhub_company_news_passes_date_range():
-    route = respx.get("https://finnhub.io/api/v1/company-news").mock(
-        return_value=httpx.Response(200, json=[])
-    )
-    client = finnhub_client()
-    await client.get("/company-news", {"symbol": "AAPL", "from": "2026-01-01", "to": "2026-01-08"})
-    assert route.calls.last.request.url.params["from"] == "2026-01-01"
-    assert route.calls.last.request.url.params["to"] == "2026-01-08"
+@pytest.fixture
+def app():
+    """A real FastMCP app with the finnhub tools registered against it.
 
-@pytest.mark.asyncio
-@respx.mock
-async def test_finnhub_insider_sentiment_endpoint():
-    respx.get("https://finnhub.io/api/v1/stock/insider-sentiment").mock(
-        return_value=httpx.Response(200, json={"data": []})
-    )
-    client = finnhub_client()
-    result = await client.get("/stock/insider-sentiment", {"symbol": "AAPL"})
-    assert result == {"data": []}
-
-@pytest.mark.asyncio
-@respx.mock
-async def test_finnhub_company_profile_endpoint():
-    route = respx.get("https://finnhub.io/api/v1/stock/profile2").mock(
-        return_value=httpx.Response(200, json={"name": "Apple Inc.", "marketCapitalization": 3000000})
-    )
-    client = finnhub_client()
-    result = await client.get("/stock/profile2", {"symbol": "AAPL"})
-    assert result == {"name": "Apple Inc.", "marketCapitalization": 3000000}
-    assert route.calls.last.request.url.params["symbol"] == "AAPL"
-
-@pytest.mark.asyncio
-@respx.mock
-async def test_finnhub_peers_endpoint():
-    route = respx.get("https://finnhub.io/api/v1/stock/peers").mock(
-        return_value=httpx.Response(200, json=["MSFT", "GOOGL"])
-    )
-    client = finnhub_client()
-    result = await client.get("/stock/peers", {"symbol": "AAPL"})
-    assert result == ["MSFT", "GOOGL"]
-    assert route.calls.last.request.url.params["symbol"] == "AAPL"
-
-@pytest.mark.asyncio
-@respx.mock
-async def test_finnhub_basic_financials_endpoint():
-    route = respx.get("https://finnhub.io/api/v1/stock/metric").mock(
-        return_value=httpx.Response(200, json={"metric": {"currentRatio": 1.5}})
-    )
-    client = finnhub_client()
-    result = await client.get("/stock/metric", {"symbol": "AAPL", "metric": "all"})
-    assert result == {"metric": {"currentRatio": 1.5}}
-    assert route.calls.last.request.url.params["symbol"] == "AAPL"
-    assert route.calls.last.request.url.params["metric"] == "all"
-
-@pytest.mark.asyncio
-@respx.mock
-async def test_finnhub_earnings_calendar_endpoint():
-    route = respx.get("https://finnhub.io/api/v1/calendar/earnings").mock(
-        return_value=httpx.Response(200, json={"earningsCalendar": []})
-    )
-    client = finnhub_client()
-    result = await client.get("/calendar/earnings", {"symbol": "AAPL"})
-    assert result == {"earningsCalendar": []}
-    assert route.calls.last.request.url.params["symbol"] == "AAPL"
-
-@pytest.mark.asyncio
-@respx.mock
-async def test_finnhub_earnings_surprises_endpoint():
-    route = respx.get("https://finnhub.io/api/v1/stock/earnings").mock(
-        return_value=httpx.Response(200, json={"earnings": []})
-    )
-    client = finnhub_client()
-    result = await client.get("/stock/earnings", {"symbol": "AAPL"})
-    assert result == {"earnings": []}
-    assert route.calls.last.request.url.params["symbol"] == "AAPL"
-
-@pytest.mark.asyncio
-@respx.mock
-async def test_finnhub_insider_transactions_endpoint():
-    route = respx.get("https://finnhub.io/api/v1/stock/insider-transactions").mock(
-        return_value=httpx.Response(200, json={"data": []})
-    )
-    client = finnhub_client()
-    result = await client.get("/stock/insider-transactions", {"symbol": "AAPL"})
-    assert result == {"data": []}
-    assert route.calls.last.request.url.params["symbol"] == "AAPL"
-
-@pytest.mark.asyncio
-@respx.mock
-async def test_finnhub_lobbying_data_endpoint():
-    route = respx.get("https://finnhub.io/api/v1/stock/lobbying").mock(
-        return_value=httpx.Response(200, json={"data": []})
-    )
-    client = finnhub_client()
-    result = await client.get("/stock/lobbying", {"symbol": "AAPL"})
-    assert result == {"data": []}
-    assert route.calls.last.request.url.params["symbol"] == "AAPL"
-
-@pytest.mark.asyncio
-@respx.mock
-async def test_finnhub_usa_spending_endpoint():
-    route = respx.get("https://finnhub.io/api/v1/stock/usa-spending").mock(
-        return_value=httpx.Response(200, json={"data": []})
-    )
-    client = finnhub_client()
-    result = await client.get("/stock/usa-spending", {"symbol": "AAPL"})
-    assert result == {"data": []}
-    assert route.calls.last.request.url.params["symbol"] == "AAPL"
-
-@pytest.mark.asyncio
-@respx.mock
-async def test_finnhub_tools_registration():
-    """Verify that register_finnhub_tools registers all 11 expected tools."""
-    from mcp.server.fastmcp import FastMCP
-    from src.tools.finnhub_tools import register_finnhub_tools
-
-    # Mock all Finnhub endpoints to allow the client to initialize without network calls
-    respx.get("https://finnhub.io/api/v1/quote").mock(
-        return_value=httpx.Response(200, json={})
-    )
-    respx.get("https://finnhub.io/api/v1/stock/profile2").mock(
-        return_value=httpx.Response(200, json={})
-    )
-    respx.get("https://finnhub.io/api/v1/stock/peers").mock(
-        return_value=httpx.Response(200, json={})
-    )
-    respx.get("https://finnhub.io/api/v1/stock/metric").mock(
-        return_value=httpx.Response(200, json={})
-    )
-    respx.get("https://finnhub.io/api/v1/calendar/earnings").mock(
-        return_value=httpx.Response(200, json={})
-    )
-    respx.get("https://finnhub.io/api/v1/stock/earnings").mock(
-        return_value=httpx.Response(200, json={})
-    )
-    respx.get("https://finnhub.io/api/v1/stock/insider-transactions").mock(
-        return_value=httpx.Response(200, json={})
-    )
-    respx.get("https://finnhub.io/api/v1/stock/insider-sentiment").mock(
-        return_value=httpx.Response(200, json={})
-    )
-    respx.get("https://finnhub.io/api/v1/stock/lobbying").mock(
-        return_value=httpx.Response(200, json={})
-    )
-    respx.get("https://finnhub.io/api/v1/stock/usa-spending").mock(
-        return_value=httpx.Response(200, json={})
-    )
-    respx.get("https://finnhub.io/api/v1/company-news").mock(
-        return_value=httpx.Response(200, json={})
-    )
-
+    register_finnhub_tools() only defines the decorated tool functions --
+    it makes no HTTP calls -- so no respx mocking is needed just to build
+    this fixture.
+    """
     app = FastMCP("test")
     register_finnhub_tools(app)
+    return app
 
+
+# (tool_name, endpoint_path, call_args, expected_query_params, mock_json_body)
+TOOL_CASES = [
+    (
+        "finnhub_company_profile",
+        "/stock/profile2",
+        {"symbol": "AAPL"},
+        {"symbol": "AAPL"},
+        {"name": "Apple Inc.", "marketCapitalization": 3000000},
+    ),
+    (
+        "finnhub_peers",
+        "/stock/peers",
+        {"symbol": "AAPL"},
+        {"symbol": "AAPL"},
+        {"peers": ["MSFT", "GOOGL"]},
+    ),
+    (
+        "finnhub_basic_financials",
+        "/stock/metric",
+        {"symbol": "AAPL"},
+        {"symbol": "AAPL", "metric": "all"},
+        {"metric": {"currentRatio": 1.5}},
+    ),
+    (
+        "finnhub_earnings_calendar",
+        "/calendar/earnings",
+        {"symbol": "AAPL"},
+        {"symbol": "AAPL"},
+        {"earningsCalendar": []},
+    ),
+    (
+        "finnhub_earnings_surprises",
+        "/stock/earnings",
+        {"symbol": "AAPL"},
+        {"symbol": "AAPL"},
+        {"earnings": []},
+    ),
+    (
+        "finnhub_insider_transactions",
+        "/stock/insider-transactions",
+        {"symbol": "AAPL"},
+        {"symbol": "AAPL"},
+        {"data": []},
+    ),
+    (
+        "finnhub_insider_sentiment",
+        "/stock/insider-sentiment",
+        {"symbol": "AAPL"},
+        {"symbol": "AAPL"},
+        {"data": []},
+    ),
+    (
+        "finnhub_lobbying_data",
+        "/stock/lobbying",
+        {"symbol": "AAPL"},
+        {"symbol": "AAPL"},
+        {"data": []},
+    ),
+    (
+        "finnhub_usa_spending",
+        "/stock/usa-spending",
+        {"symbol": "AAPL"},
+        {"symbol": "AAPL"},
+        {"data": []},
+    ),
+    (
+        "finnhub_company_news",
+        "/company-news",
+        {"symbol": "AAPL", "from_date": "2026-01-01", "to_date": "2026-01-08"},
+        {"symbol": "AAPL", "from": "2026-01-01", "to": "2026-01-08"},
+        {"news": []},
+    ),
+    (
+        "finnhub_quote",
+        "/quote",
+        {"symbol": "AAPL"},
+        {"symbol": "AAPL"},
+        {"c": 150.0},
+    ),
+]
+
+TOOL_NAMES = [case[0] for case in TOOL_CASES]
+
+
+@pytest.mark.asyncio
+@respx.mock
+@pytest.mark.parametrize(
+    "tool_name, endpoint_path, call_args, expected_params, mock_body", TOOL_CASES, ids=TOOL_NAMES
+)
+async def test_finnhub_tool_calls_correct_endpoint(
+    app, tool_name, endpoint_path, call_args, expected_params, mock_body
+):
+    """Each tool, invoked through the real call_tool() path, must hit the
+    right Finnhub endpoint with the right query params and hand back the
+    provider's JSON payload -- exercising the actual tool body, not just
+    the underlying ProviderClient.get()."""
+    route = respx.get(f"https://finnhub.io/api/v1{endpoint_path}").mock(
+        return_value=httpx.Response(200, json=mock_body)
+    )
+
+    result = await app.call_tool(tool_name, call_args)
+
+    assert route.called
+    request_params = dict(route.calls.last.request.url.params)
+    for key, value in expected_params.items():
+        assert request_params[key] == value
+
+    # call_tool(convert_result=True) on a bare `dict`-annotated tool (no
+    # output schema) returns Sequence[ContentBlock]; for a dict-shaped
+    # return value that collapses to a single TextContent block whose
+    # .text is the JSON-serialized payload.
+    assert len(result) == 1
+    assert json.loads(result[0].text) == mock_body
+
+
+@pytest.mark.asyncio
+async def test_finnhub_tools_registration(app):
+    """Verify that register_finnhub_tools registers all 11 expected tools."""
     tools = await app.list_tools()
     tool_names = {tool.name for tool in tools}
 
-    expected_tools = {
-        "finnhub_company_profile",
-        "finnhub_peers",
-        "finnhub_basic_financials",
-        "finnhub_earnings_calendar",
-        "finnhub_earnings_surprises",
-        "finnhub_insider_transactions",
-        "finnhub_insider_sentiment",
-        "finnhub_lobbying_data",
-        "finnhub_usa_spending",
-        "finnhub_company_news",
-        "finnhub_quote",
-    }
-
-    assert tool_names == expected_tools
+    assert tool_names == set(TOOL_NAMES)
