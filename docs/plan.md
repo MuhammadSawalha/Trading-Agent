@@ -2617,6 +2617,13 @@ Expected: FAIL with `ModuleNotFoundError`
 
 - [ ] **Step 4: Implement the graph skeleton with stub nodes**
 
+Note: the topology below differs from an earlier version of this plan, which had the
+specialists fan out to both `bull` and `bear` in parallel and both debate nodes feed
+`risk`. That shape produced two verified LangGraph execution-order bugs: `bear` could run
+before `bull` had produced the claims its rebuttal round argues against, and the two
+inbound edges to `risk` made `risk` fire twice. The debate stage is therefore sequential —
+`specialist → bull → bear → risk` — with `bear` as `risk`'s only predecessor.
+
 ```python
 # services/scheduler/src/graph/build_graph.py
 from langgraph.graph import StateGraph, START, END
@@ -2637,9 +2644,8 @@ def build_graph():
     for specialist in ["fundamentals", "technical", "sentiment", "macro_options"]:
         builder.add_edge(START, specialist)
         builder.add_edge(specialist, "bull")
-        builder.add_edge(specialist, "bear")
 
-    builder.add_edge("bull", "risk")
+    builder.add_edge("bull", "bear")
     builder.add_edge("bear", "risk")
     builder.add_edge("risk", "manager")
     builder.add_edge("manager", END)
