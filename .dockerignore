@@ -1,0 +1,15 @@
+# Keeps Docker build contexts (docker-compose.yaml's services build with `context: .`, the
+# repo root) small and hermetic. Without this, COPY packages/common /app/packages/common in
+# service Dockerfiles pulls in untracked build/, *.egg-info, and __pycache__/.pytest_cache
+# alongside the .venv/.git directories that make up most of the repo's ~500MB on disk -- a
+# stale packages/common/build/ could in principle get baked into the wheel instead of fresh
+# source, depending on setuptools' staleness check.
+.git
+.venv
+**/.venv
+**/build
+**/*.egg-info
+**/__pycache__
+**/.pytest_cache
+node_modules
+.superpowers

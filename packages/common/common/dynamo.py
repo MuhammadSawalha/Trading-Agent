@@ -108,3 +108,26 @@ def get_last_fetch_attempt(pk: str) -> datetime | None:
     table = _dynamo_resource().Table("ToolResults")
     item = table.get_item(Key={"pk": f"{pk}#LAST_ATTEMPT"}).get("Item")
     return datetime.fromisoformat(item["attempted_at"]) if item else None
+
+_WATCHLIST_PK = "WATCHLIST#CONFIG"
+_WATCHLIST_MAX_SIZE = 30
+_WATCHLIST_TTL_SECONDS = 10 * 365 * 24 * 3600  # effectively permanent
+
+class WatchlistFullError(Exception):
+    pass
+
+def read_watchlist() -> list[str]:
+    result = read_tool_result(_WATCHLIST_PK)
+    return result["symbols"] if result else []
+
+def add_to_watchlist(symbol: str) -> None:
+    symbols = read_watchlist()
+    if symbol in symbols:
+        return
+    if len(symbols) >= _WATCHLIST_MAX_SIZE:
+        raise WatchlistFullError(f"watchlist is at its {_WATCHLIST_MAX_SIZE}-symbol maximum")
+    write_tool_result(_WATCHLIST_PK, {"symbols": symbols + [symbol]}, ttl_seconds=_WATCHLIST_TTL_SECONDS)
+
+def remove_from_watchlist(symbol: str) -> None:
+    symbols = [s for s in read_watchlist() if s != symbol]
+    write_tool_result(_WATCHLIST_PK, {"symbols": symbols}, ttl_seconds=_WATCHLIST_TTL_SECONDS)
