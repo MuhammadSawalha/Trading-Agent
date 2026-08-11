@@ -3,20 +3,40 @@ import logging
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from .discovery import fetch_discovery_dashboards
-from .input_data_agent import run_input_data_agent_for_symbol
+from .input_data_agent import run_input_data_agent_for_symbol, FETCH_PLAN
 from .graph.build_graph import build_graph
-from common.dynamo import read_watchlist
+from common.dynamo import read_watchlist, read_tool_result
 
 logger = logging.getLogger(__name__)
 _ET = ZoneInfo("America/New_York")
 _graph = None  # built lazily, once, on first tick
+
+def _build_tool_data(symbol: str) -> dict[str, dict]:
+    """Reassembles the per-specialist tool_data dict the graph expects (specialists.py reads
+    state["tool_data"][specialist_name]) by reading back everything run_input_data_agent_for_symbol
+    already wrote to DynamoDB for this symbol's FETCH_PLAN entries. Skips any pk not yet fetched."""
+    tool_data: dict[str, dict] = {}
+    for spec in FETCH_PLAN:
+        pk = f"{symbol}#{spec.tool_name}" if spec.per_symbol else f"GLOBAL#{spec.tool_name}"
+        payload = read_tool_result(pk)
+        if payload is None:
+            continue
+        tool_data.setdefault(spec.specialist, {})[spec.tool_name] = payload
+    return tool_data
 
 async def scheduler_tick(mcp_client, now_utc: datetime, now_et: datetime, previously_seen: set[str]) -> set[str]:
     global _graph
     if _graph is None:
         _graph = build_graph()
 
-    await fetch_discovery_dashboards(mcp_client, now_et)
+    try:
+        await fetch_discovery_dashboards(mcp_client, now_et)
+    except Exception:
+        # The discovery-tier fetch talks to the same circuit-breaker-protected shared
+        # TradingView/stock_scanner upstream (spec §7) -- a CircuitOpenError or any other
+        # failure here is unrelated to any individual symbol's data and must not block the
+        # per-symbol watchlist processing below (spec §10).
+        logger.exception("discovery-tier fetch failed; continuing with watchlist processing")
 
     watchlist = read_watchlist()
     seen = set(previously_seen)
@@ -33,7 +53,7 @@ async def scheduler_tick(mcp_client, now_utc: datetime, now_et: datetime, previo
                 "symbol": symbol, "mcp_client": mcp_client,
                 "is_new_symbol": result.is_new_symbol,
                 "changed_specialists": result.changed_specialists,
-                "tool_data": {},
+                "tool_data": _build_tool_data(symbol),
             })
         except Exception:
             # One symbol's fetch or pipeline run failing (including a Risk agent that never
