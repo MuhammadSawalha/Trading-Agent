@@ -7,7 +7,7 @@ import { NewsFeed } from "./components/NewsFeed";
 export default function App() {
   return (
     <div style={{ display: "flex", width: "100%", height: "100vh" }}>
-      <a href="/visualizer">Open live pipeline visualizer</a>
+      <a href="/visualizer.html">Open live pipeline visualizer</a>
       <div style={{ width: "50%", overflowY: "auto", padding: "1rem" }}>
         <DiscoveryGrid />
         <Watchlist />
