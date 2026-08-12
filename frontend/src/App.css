@@ -161,6 +161,33 @@
   }
 }
 
+[class^="agent-"] {
+  padding: 0.5rem;
+  border-radius: 4px;
+  min-width: 100px;
+}
+
+.agent-fresh {
+  background: #d4edda;
+  border: 1px solid #28a745;
+}
+
+.agent-recent {
+  background: #fff3cd;
+  border: 1px solid #ffc107;
+}
+
+.agent-stale {
+  background: #f0f0f0;
+  border: 1px solid #ccc;
+}
+
+.agent-never {
+  background: #f8f9fa;
+  border: 1px dashed #999;
+  color: #999;
+}
+
 .ticks {
   position: relative;
   width: 100%;

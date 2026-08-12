@@ -19,7 +19,11 @@ export function DetailModal({ symbol, onClose }: { symbol: string; onClose: () =
         {detail && (
           <>
             <PipelineView agents={detail.agents} />
-            <ResultsChart verdict={detail.verdict} />
+            <ResultsChart
+              verdict={detail.verdict}
+              bullClaims={detail.agents.Bull?.claims}
+              bearClaims={detail.agents.Bear?.claims}
+            />
           </>
         )}
       </div>
