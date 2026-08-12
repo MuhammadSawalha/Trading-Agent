@@ -1,5 +1,16 @@
 type Verdict = { net_score?: number; confidence?: number; label?: string };
-type Claim = unknown;
+type Claim = {
+  strength: "strong" | "moderate" | "weak";
+  corroborated: boolean;
+  flagged_unreliable: boolean;
+  rebutted_undefended: boolean;
+  source_type: "news" | "volume" | "other";
+  rationale: string;
+  news_hours_old?: number | null;
+  news_is_primary_entity?: boolean | null;
+  volume_ratio?: number | null;
+  avg_volume?: number | null;
+};
 
 export function ResultsChart({
   verdict,
@@ -30,7 +41,7 @@ export function ResultsChart({
           <h4>Bull case</h4>
           <ul>
             {bullClaims.map((claim, i) => (
-              <li key={i}>{String(claim)}</li>
+              <li key={i}>{claim.rationale} <small>({claim.strength})</small></li>
             ))}
           </ul>
         </div>
@@ -38,7 +49,7 @@ export function ResultsChart({
           <h4>Bear case</h4>
           <ul>
             {bearClaims.map((claim, i) => (
-              <li key={i}>{String(claim)}</li>
+              <li key={i}>{claim.rationale} <small>({claim.strength})</small></li>
             ))}
           </ul>
         </div>

@@ -188,6 +188,44 @@
   color: #999;
 }
 
+.viz-node {
+  padding: 0.5rem;
+  border-radius: 4px;
+  min-width: 100px;
+  cursor: pointer;
+}
+
+.viz-idle {
+  background: #f8f9fa;
+  border: 1px dashed #999;
+  color: #999;
+}
+
+.viz-running {
+  background: #fff3cd;
+  border: 1px solid #ffc107;
+  animation: viz-pulse 1.2s ease-in-out infinite;
+}
+
+.viz-finished {
+  background: #d4edda;
+  border: 1px solid #28a745;
+}
+
+.viz-failed {
+  background: #f8d7da;
+  border: 1px solid #dc3545;
+}
+
+@keyframes viz-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
 .ticks {
   position: relative;
   width: 100%;

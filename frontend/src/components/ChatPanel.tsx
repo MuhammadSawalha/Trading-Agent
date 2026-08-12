@@ -3,7 +3,7 @@ import { apiClient } from "../api/client";
 
 type Message = { role: "user" | "assistant"; text: string };
 
-export function ChatPanel() {
+export function ChatPanel({ symbols = [] }: { symbols?: string[] } = {}) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
 
@@ -11,7 +11,7 @@ export function ChatPanel() {
     const question = input;
     setMessages((m) => [...m, { role: "user", text: question }]);
     setInput("");
-    const { answer } = await apiClient.sendChatMessage(question, []);
+    const { answer } = await apiClient.sendChatMessage(question, symbols);
     setMessages((m) => [...m, { role: "assistant", text: answer }]);
   };
 

@@ -1,15 +1,15 @@
 import { useState } from "react";
 import { useSSE } from "../hooks/useSSE";
 
-type PipelineEvent = { agent: string; status: "started" | "finished"; timestamp: string; reason: string };
+type PipelineEvent = { agent: string; status: "started" | "finished" | "failed"; timestamp: string; reason: string };
 
 const NODE_ORDER = ["Fundamentals", "Technical", "Sentiment", "Macro_Options", "Bull", "Bear", "Risk", "Manager"];
 
-function computeStates(events: PipelineEvent[]): Record<string, "idle" | "running" | "finished"> {
-  const states: Record<string, "idle" | "running" | "finished"> = {};
+function computeStates(events: PipelineEvent[]): Record<string, "idle" | "running" | "finished" | "failed"> {
+  const states: Record<string, "idle" | "running" | "finished" | "failed"> = {};
   for (const node of NODE_ORDER) states[node] = "idle";
   for (const event of events) {
-    states[event.agent] = event.status === "started" ? "running" : "finished";
+    states[event.agent] = event.status === "started" ? "running" : event.status === "failed" ? "failed" : "finished";
   }
   return states;
 }

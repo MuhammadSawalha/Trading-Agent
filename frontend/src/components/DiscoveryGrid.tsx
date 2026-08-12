@@ -6,7 +6,7 @@ const PANEL_TITLES: Record<string, string> = {
   top_volume: "Top Volume", volume_breakout: "Volume Breakout",
 };
 
-export function DiscoveryGrid() {
+export function DiscoveryGrid({ onSymbolAdded }: { onSymbolAdded?: () => void } = {}) {
   const [dashboards, setDashboards] = useState<Record<string, { results: unknown[] }>>({});
   const [tickerInput, setTickerInput] = useState("");
   const [addError, setAddError] = useState<string | null>(null);
@@ -20,6 +20,7 @@ export function DiscoveryGrid() {
     try {
       await apiClient.addSymbol(tickerInput.toUpperCase());
       setTickerInput("");
+      onSymbolAdded?.();
     } catch (e) {
       setAddError((e as Error).message);
     }

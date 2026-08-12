@@ -8,7 +8,7 @@ vi.mock("../api/client");
 describe("Watchlist", () => {
   it("renders a row per watchlist symbol with verdict and last-updated", async () => {
     vi.mocked(apiClient.getWatchlistDashboard).mockResolvedValue([
-      { symbol: "AAPL", verdict: { label: "Bullish, moderate confidence" }, last_updated: "2026-01-05T12:00:00+00:00" },
+      { symbol: "AAPL", price: 150.25, percent_change: 1.2, verdict: { label: "Bullish, moderate confidence" }, last_updated: "2026-01-05T12:00:00+00:00" },
     ]);
     render(<Watchlist />);
     await waitFor(() => expect(screen.getByText("AAPL")).toBeInTheDocument());
@@ -17,7 +17,7 @@ describe("Watchlist", () => {
 
   it("clicking remove calls apiClient.removeSymbol", async () => {
     vi.mocked(apiClient.getWatchlistDashboard).mockResolvedValue([
-      { symbol: "AAPL", verdict: { label: "Bullish" }, last_updated: null },
+      { symbol: "AAPL", price: null, percent_change: null, verdict: { label: "Bullish" }, last_updated: null },
     ]);
     vi.mocked(apiClient.removeSymbol).mockResolvedValue(undefined);
     render(<Watchlist />);
