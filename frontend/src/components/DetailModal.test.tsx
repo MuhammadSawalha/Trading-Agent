@@ -29,4 +29,42 @@ describe("DetailModal", () => {
     fireEvent.click(screen.getByTestId("modal-backdrop"));
     expect(onClose).toHaveBeenCalled();
   });
+
+  it("clicking a pipeline node shows its real output", async () => {
+    const now = new Date().toISOString();
+    vi.mocked(apiClient.getSymbolDetail).mockResolvedValue({
+      symbol: "AAPL",
+      agents: {
+        Sentiment: { last_updated: now, claims: [{ rationale: "New Reuters coverage", strength: "strong" }] },
+        Fundamentals: { last_updated: now, claims: [] },
+        Bull: { last_updated: now, claims: [] },
+        Bear: { last_updated: now, claims: [] },
+        Risk: { last_updated: now, risk_level: "medium", rationale: "Elevated volatility" },
+        Manager: { last_updated: now, label: "Bullish, moderate confidence", confidence: 71 },
+      },
+      verdict: { label: "Bullish, moderate confidence", net_score: 42, confidence: 71 },
+    });
+    render(<DetailModal symbol="AAPL" onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByTestId("agent-node-Sentiment")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId("agent-node-Sentiment"));
+    expect(screen.getByText(/New Reuters coverage/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("agent-node-Risk"));
+    expect(screen.getByText(/Elevated volatility/)).toBeInTheDocument();
+    expect(screen.getByText(/Risk level: medium/)).toBeInTheDocument();
+  });
+
+  it("shows a Watch Live link scoped to the symbol, opening in a new tab", async () => {
+    vi.mocked(apiClient.getSymbolDetail).mockResolvedValue({
+      symbol: "AAPL",
+      agents: {},
+      verdict: { label: "Bullish, moderate confidence", net_score: 10, confidence: 55 },
+    });
+    render(<DetailModal symbol="AAPL" onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByText(/watch live/i)).toBeInTheDocument());
+    const link = screen.getByText(/watch live/i).closest("a");
+    expect(link).toHaveAttribute("href", "/visualizer.html?symbol=AAPL");
+    expect(link).toHaveAttribute("target", "_blank");
+  });
 });

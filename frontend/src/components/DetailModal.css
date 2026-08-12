@@ -1,0 +1,268 @@
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal-card {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  width: 520px;
+  max-width: 90vw;
+  max-height: 85vh;
+  overflow-y: auto;
+  padding: 22px;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.modal-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-h);
+}
+
+.modal-close {
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 18px;
+}
+
+.modal-section-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 18px 0 8px;
+}
+
+.pipeline-view {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pipeline-specialists {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.pipeline-node {
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.pipeline-node-selected {
+  box-shadow: 0 0 0 2px rgba(61, 220, 132, 0.25);
+}
+
+.pipeline-node-age {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.pipeline-converge {
+  margin: 2px 0;
+}
+
+.pipeline-arrow {
+  text-align: center;
+  color: #3b4a6b;
+  font-size: 14px;
+  padding: 2px 0;
+}
+
+.node-output-panel {
+  background: #12141b;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-top: 10px;
+}
+
+.node-output-title {
+  font-size: 11px;
+  color: var(--positive);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
+  font-weight: 700;
+}
+
+.node-output-item {
+  font-size: 12px;
+  color: #c9cfdd;
+  padding: 3px 0;
+}
+
+.node-output-strength {
+  color: var(--text-dim);
+}
+
+.node-output-empty {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.results-section-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 18px 0 8px;
+}
+
+.results-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.results-bar-label {
+  font-size: 12px;
+  width: 40px;
+}
+
+.results-bar-label-bear {
+  color: var(--negative);
+}
+
+.results-bar-label-bull {
+  color: var(--positive);
+  text-align: right;
+}
+
+.results-bar-track {
+  flex: 1;
+  height: 8px;
+  background: #20242f;
+  border-radius: 4px;
+  overflow: hidden;
+  display: flex;
+}
+
+.results-bar-bear {
+  background: var(--negative);
+}
+
+.results-bar-bull {
+  background: var(--positive);
+}
+
+.results-risk {
+  margin-bottom: 14px;
+}
+
+.results-risk-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-h);
+  text-align: center;
+  margin-bottom: 6px;
+}
+
+.results-risk-badge-row {
+  display: flex;
+  justify-content: center;
+}
+
+.results-risk-badge {
+  border-radius: 20px;
+  padding: 3px 14px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.results-risk-low {
+  background: rgba(61, 220, 132, 0.15);
+  color: var(--positive);
+}
+
+.results-risk-medium {
+  background: rgba(255, 180, 84, 0.15);
+  color: var(--warning);
+}
+
+.results-risk-high {
+  background: rgba(255, 107, 107, 0.15);
+  color: var(--negative);
+}
+
+.results-cases {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  margin-bottom: 16px;
+}
+
+.results-case {
+  flex: 1;
+}
+
+.results-case-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.results-case-title-bull {
+  color: var(--positive);
+}
+
+.results-case-title-bear {
+  color: var(--negative);
+}
+
+.results-case-item {
+  color: #c9cfdd;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top: 1px solid var(--panel-border);
+  padding-top: 14px;
+}
+
+.modal-verdict-label {
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--text-h);
+}
+
+.modal-footer-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.modal-confidence {
+  font-weight: 700;
+  font-size: 18px;
+}
+
+.modal-watch-live {
+  background: var(--panel-border);
+  border: 1px solid #3b4a6b;
+  color: var(--text);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
