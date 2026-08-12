@@ -2,6 +2,7 @@ import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { LiveVisualizer } from "./components/LiveVisualizer";
 import "./index.css";
+import "./components/LiveVisualizer.css";
 
 function VisualizerEntry() {
   const initialSymbol = new URLSearchParams(window.location.search).get("symbol") ?? "";
@@ -10,10 +11,15 @@ function VisualizerEntry() {
 
   if (!symbol) {
     return (
-      <div style={{ padding: "1rem" }}>
+      <div className="live-viz-entry-form">
         <h2>Live Pipeline Visualizer</h2>
-        <input placeholder="Enter ticker..." value={input} onChange={(e) => setInput(e.target.value)} />
-        <button onClick={() => setSymbol(input.toUpperCase())}>View</button>
+        <input
+          className="live-viz-entry-input"
+          placeholder="Enter ticker..."
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+        />
+        <button className="live-viz-entry-button" onClick={() => setSymbol(input.toUpperCase())}>View</button>
       </div>
     );
   }
