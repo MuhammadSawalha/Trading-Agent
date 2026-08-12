@@ -25,7 +25,17 @@ for i in $(seq 1 45); do
   # dashboard router has no prefix either (see services/api-backend/src/routers/dashboard.py);
   # the real path is /symbols/{symbol}/detail.
   DETAIL=$(curl -sf http://localhost:8080/symbols/AAPL/detail)
-  if echo "$DETAIL" | grep -q '"Manager"'; then
+  # symbol_detail() (services/api-backend/src/routers/dashboard.py) unconditionally writes an
+  # "agents.manager" entry for every symbol, even before any pipeline has run -- it falls back
+  # to `read_agent_output(...) or {}`, so a plain `grep -q '"Manager"'` would pass on the very
+  # first poll regardless of whether a real verdict exists. What only appears once the Manager
+  # agent has actually written output is a non-null agents.manager.last_updated (populated from
+  # ProcessHistory), so check that instead of just the key's presence.
+  if echo "$DETAIL" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+sys.exit(0 if data.get('agents', {}).get('manager', {}).get('last_updated') else 1)
+"; then
     echo "Manager verdict present. Smoke test passed."
     exit 0
   fi
