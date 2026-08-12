@@ -1,11 +1,11 @@
-# docs/manual-qa-checklist.md
+# Manual QA Checklist
 
 Run through this before every `prod` deploy (spec §11).
 
 ## Discovery dashboards
 - [ ] All four panels (Top Gainers, Top Losers, Top Volume, Volume Breakout) render 10 rows each
 - [ ] Panels are read-only — clicking a row does nothing
-- [ ] Panels refresh roughly every 30 min during market hours; no refresh 8pm-4am ET
+- [ ] Panels refresh roughly every 30 min between 4am and 8pm ET; no refresh 8pm-4am ET
 
 ## Watchlist
 - [ ] Adding a valid ticker succeeds; adding an invalid ticker shows an inline error, doesn't add
