@@ -34,6 +34,7 @@ def test_manager_runs_after_risk():
     edges = {(e.source, e.target) for e in graph.get_graph().edges}
     assert ("risk", "manager") in edges
 
+@patch("src.graph.manager.append_process_history")
 @patch("src.graph.manager.write_agent_output")
 @patch("src.graph.manager.call_tool", new_callable=AsyncMock)
 @patch("src.graph.risk.append_process_history")
@@ -48,7 +49,7 @@ def test_manager_runs_after_risk():
 @patch("src.graph.specialists.append_process_history")
 @patch("src.graph.specialists.write_agent_output")
 @patch("src.graph.specialists.read_agent_output")
-async def test_compiled_graph_executes_without_error(mock_read, mock_write, mock_append, mock_invoke, mock_bull, mock_bear, mock_rebuttal, mock_debate_write, mock_debate_append, mock_risk, mock_risk_write, mock_risk_append, mock_call_tool, mock_manager_write):
+async def test_compiled_graph_executes_without_error(mock_read, mock_write, mock_append, mock_invoke, mock_bull, mock_bear, mock_rebuttal, mock_debate_write, mock_debate_append, mock_risk, mock_risk_write, mock_risk_append, mock_call_tool, mock_manager_write, mock_manager_append):
     # Mock DynamoDB operations and LLM calls to avoid AWS dependencies
     mock_read.return_value = None  # Cache miss for all specialists
     mock_invoke.return_value = {"claims": [{"strength": "moderate", "corroborated": True, "flagged_unreliable": False, "rebutted_undefended": False, "source_type": "other", "rationale": "test"}]}

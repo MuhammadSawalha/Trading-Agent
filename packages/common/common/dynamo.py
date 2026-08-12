@@ -82,15 +82,46 @@ def append_process_history(symbol: str, agent: str, reason: str, status: str, ti
     })
 
 def query_process_history(symbol: str, since: datetime | None = None) -> list[dict]:
+    # ProcessHistory is an append-only audit log, so a symbol's history grows without
+    # bound. DynamoDB returns at most 1MB per query page and signals more data with
+    # LastEvaluatedKey; without draining every page this returns only the *oldest*
+    # 1MB, silently freezing every "last updated" consumer on stale data forever.
+    #
+    # `since`, when given, is applied as a range condition on `sk` rather than as a
+    # client-side filter after the fact: `sk` is written as
+    # f"{timestamp.isoformat()}#{agent}" (see append_process_history above), and a bare
+    # ISO-8601 timestamp string is a strict prefix of any `sk` sharing that timestamp, so
+    # Key("sk").gte(since.isoformat()) is a correct inclusive lower bound. This lets
+    # DynamoDB itself skip everything older instead of fetching it and discarding it here.
+    table = _dynamo_resource().Table("ProcessHistory")
+    key_condition = boto3.dynamodb.conditions.Key("symbol").eq(symbol)
+    if since is not None:
+        since_iso = _to_utc(since).isoformat()
+        key_condition = key_condition & boto3.dynamodb.conditions.Key("sk").gte(since_iso)
+    items = []
+    kwargs = {"KeyConditionExpression": key_condition}
+    while True:
+        response = table.query(**kwargs)
+        items.extend(response["Items"])
+        if "LastEvaluatedKey" not in response:
+            break
+        kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+    return sorted(items, key=lambda i: i["sk"])
+
+def get_latest_process_history_entry(symbol: str) -> dict | None:
+    # Cheap, bounded alternative to query_process_history for callers that only need
+    # the single newest entry (e.g. a "last updated" display) rather than the full
+    # history. ScanIndexForward=False returns items in descending `sk` order, and since
+    # `sk` is timestamp-prefixed (see append_process_history), the first item is the
+    # newest -- so Limit=1 reads exactly one item instead of draining the whole table.
     table = _dynamo_resource().Table("ProcessHistory")
     response = table.query(
         KeyConditionExpression=boto3.dynamodb.conditions.Key("symbol").eq(symbol),
+        ScanIndexForward=False,
+        Limit=1,
     )
-    items = sorted(response["Items"], key=lambda i: i["sk"])
-    if since is not None:
-        since_utc = _to_utc(since).isoformat()
-        items = [i for i in items if i["timestamp"] >= since_utc]
-    return items
+    items = response["Items"]
+    return items[0] if items else None
 
 _FETCH_ATTEMPT_TTL_SECONDS = 7 * 86400  # generous fixed window, independent of any tool's own cadence
 

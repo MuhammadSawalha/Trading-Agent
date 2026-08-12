@@ -34,13 +34,15 @@ services:
     depends_on: [dynamodb-local, mcp-server]
 
   api-backend:
-    build: ./services/api-backend
+    build:
+      context: .
+      dockerfile: services/api-backend/Dockerfile
     env_file:
       - path: .env
         required: false
     environment:
       DYNAMODB_ENDPOINT: http://dynamodb-local:8000
-      MCP_SERVER_URL: http://mcp-server:8001
+      OWN_MCP_SERVER_URL: http://mcp-server:8001/mcp
     ports: ["8080:8080"]
     depends_on: [dynamodb-local, mcp-server]
 
