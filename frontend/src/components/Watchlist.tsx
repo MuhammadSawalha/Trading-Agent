@@ -64,12 +64,14 @@ export function Watchlist({
                 <td className="watchlist-symbol">{row.symbol}</td>
                 <td className="watchlist-price">{row.price != null ? `$${row.price.toFixed(2)}` : "—"}</td>
                 <td className={changeClass}>
-                  {row.percent_change != null ? `${row.percent_change > 0 ? "+" : ""}${row.percent_change}%` : "—"}
+                  {row.percent_change != null
+                    ? `${row.percent_change > 0 ? "+" : ""}${row.percent_change.toFixed(2)}%`
+                    : "—"}
                 </td>
                 <td>
                   <span className={`watchlist-verdict-pill watchlist-verdict-${tone}`}>
                     {verdictHeadline(row.verdict?.label)}
-                    {row.verdict?.confidence != null && ` · ${row.verdict.confidence}%`}
+                    {row.verdict?.confidence != null && ` · ${Math.round(row.verdict.confidence)}%`}
                   </span>
                 </td>
                 <td className="watchlist-age">{row.last_updated ?? "never"}</td>

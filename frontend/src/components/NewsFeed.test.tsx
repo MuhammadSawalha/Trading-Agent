@@ -19,6 +19,17 @@ describe("NewsFeed", () => {
     expect(headlines[1]).toHaveTextContent("Older article");
   });
 
+  it("dedups events sharing the same uuid (e.g. after an SSE reconnect replays cached articles)", () => {
+    vi.mocked(useSSE).mockReturnValue({
+      events: [
+        { symbol: "AAPL", uuid: "1", title: "Original article", published_at: "2026-01-01T00:00:00Z" },
+        { symbol: "AAPL", uuid: "1", title: "Original article", published_at: "2026-01-01T00:00:00Z" },
+      ],
+    });
+    render(<NewsFeed />);
+    expect(screen.getAllByText(/Original article/)).toHaveLength(1);
+  });
+
   it("caps the rendered list at 20 articles", () => {
     const events = Array.from({ length: 25 }, (_, i) => ({
       symbol: "AAPL",

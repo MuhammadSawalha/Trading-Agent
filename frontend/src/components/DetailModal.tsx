@@ -45,7 +45,7 @@ function NodeOutput({ name, data }: { name: string; data: AgentData }) {
   if (name === "Manager") {
     return (
       <div className="node-output-item">
-        {data.label ?? "—"} ({data.confidence ?? 0}% confidence)
+        {data.label ?? "—"} ({Math.round(data.confidence ?? 0)}% confidence)
       </div>
     );
   }
@@ -100,7 +100,7 @@ export function DetailModal({ symbol, onClose }: { symbol: string; onClose: () =
             <div className="modal-footer">
               <div className="modal-verdict-label">{detail.verdict?.label ?? "No verdict yet"}</div>
               <div className="modal-footer-right">
-                <div className="modal-confidence">{detail.verdict?.confidence ?? 0}%</div>
+                <div className="modal-confidence">{Math.round(detail.verdict?.confidence ?? 0)}%</div>
                 <a
                   className="modal-watch-live"
                   href={`/visualizer.html?symbol=${symbol}`}

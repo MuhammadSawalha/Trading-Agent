@@ -26,7 +26,15 @@ function timeAgo(publishedAt?: string): string {
 
 export function NewsFeed() {
   const { events } = useSSE<NewsEvent>("/stream/news");
-  const sorted = [...events]
+  // Dedup by uuid: the backend's per-connection dedup state resets on every SSE
+  // reconnect (EventSource auto-reconnects on drops), so cached articles can be
+  // re-emitted as if new. Events without a uuid can't be deduped, so they fall
+  // back to a unique per-index key and are kept as-is.
+  const deduped = new Map<string, NewsEvent>();
+  events.forEach((e, i) => {
+    deduped.set(e.uuid ?? `__no-uuid-${i}`, e);
+  });
+  const sorted = [...deduped.values()]
     .sort((a, b) => (b.published_at ?? "").localeCompare(a.published_at ?? ""))
     .slice(0, MAX_VISIBLE_ARTICLES);
 

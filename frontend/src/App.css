@@ -6,33 +6,3 @@
   color: var(--text-h);
   margin-bottom: 20px;
 }
-
-[class^="agent-"] {
-  padding: 6px 8px;
-  border-radius: 8px;
-  min-width: 100px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.agent-fresh {
-  background: rgba(61, 220, 132, 0.12);
-  border: 1px solid var(--positive);
-}
-
-.agent-recent {
-  background: rgba(143, 184, 255, 0.10);
-  border: 1px solid #3b4a6b;
-}
-
-.agent-stale {
-  background: rgba(154, 164, 187, 0.08);
-  border: 1px solid var(--panel-border);
-  color: var(--text-dim);
-}
-
-.agent-never {
-  background: var(--panel-bg);
-  border: 1px dashed var(--text-dim);
-  color: var(--text-dim);
-}

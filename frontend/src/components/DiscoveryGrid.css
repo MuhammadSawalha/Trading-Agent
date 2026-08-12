@@ -46,9 +46,12 @@
 }
 
 .discovery-add {
+  margin-bottom: 16px;
+}
+
+.discovery-add-row {
   display: flex;
   gap: 8px;
-  margin-bottom: 16px;
 }
 
 .discovery-add-input {

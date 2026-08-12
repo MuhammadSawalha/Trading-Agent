@@ -100,13 +100,15 @@ export function DiscoveryGrid({ onSymbolAdded }: { onSymbolAdded?: () => void } 
         })}
       </div>
       <div className="discovery-add">
-        <input
-          className="discovery-add-input"
-          placeholder="Add a company by its ticker..."
-          value={tickerInput}
-          onChange={(e) => setTickerInput(e.target.value)}
-        />
-        <button className="discovery-add-button" onClick={handleAdd}>Add +</button>
+        <div className="discovery-add-row">
+          <input
+            className="discovery-add-input"
+            placeholder="Add a company by its ticker..."
+            value={tickerInput}
+            onChange={(e) => setTickerInput(e.target.value)}
+          />
+          <button className="discovery-add-button" onClick={handleAdd}>Add +</button>
+        </div>
         {addError && <p className="discovery-add-error">{addError}</p>}
       </div>
     </div>
