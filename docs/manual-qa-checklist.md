@@ -27,5 +27,7 @@ Run through this before every `prod` deploy (spec §11).
 
 ## Live pipeline visualizer
 - [ ] Opening it for a symbol mid-run shows nodes transitioning idle → running → finished in the
-      correct dependency order (four specialists in parallel, then Bull/Bear in parallel, then Risk, then Manager)
+      correct dependency order (four specialists in parallel, then Bull, then Bear, then Risk, then
+      Manager — each strictly sequential from Bull onward, confirmed against
+      services/scheduler/src/graph/build_graph.py)
 - [ ] Clicking a finished node shows what it produced
