@@ -15,4 +15,13 @@ describe("ChatPanel", () => {
     await waitFor(() => expect(screen.getByText(/AAPL looks bullish/)).toBeInTheDocument());
     expect(apiClient.sendChatMessage).toHaveBeenCalledWith("How does AAPL look?", []);
   });
+
+  it("shows an error message when sending fails, without losing the user's question", async () => {
+    vi.mocked(apiClient.sendChatMessage).mockRejectedValue(new Error("network error"));
+    render(<ChatPanel />);
+    fireEvent.change(screen.getByPlaceholderText(/ask about your watchlist/i), { target: { value: "How does AAPL look?" } });
+    fireEvent.click(screen.getByText(/send/i));
+    await waitFor(() => expect(screen.getByText(/something went wrong/i)).toBeInTheDocument());
+    expect(screen.getByText("How does AAPL look?")).toBeInTheDocument();
+  });
 });
