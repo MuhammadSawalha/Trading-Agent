@@ -62,6 +62,79 @@ async def test_marketaux_news_all_calls_correct_endpoint(app):
 
 
 @pytest.mark.asyncio
+@respx.mock
+async def test_marketaux_news_all_passes_language_filter(app):
+    """When a language is supplied it must be forwarded as a query param, and
+    when omitted it must not appear at all (rather than being sent as "None")."""
+    route = respx.get("https://api.marketaux.com/v1/news/all").mock(
+        return_value=httpx.Response(200, json={"data": []})
+    )
+
+    await app.call_tool("marketaux_news_all", {"symbols": "AAPL", "language": "en"})
+    request_params = dict(route.calls.last.request.url.params)
+    assert request_params["language"] == "en"
+
+    await app.call_tool("marketaux_news_all", {"symbols": "AAPL"})
+    request_params = dict(route.calls.last.request.url.params)
+    assert "language" not in request_params
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_marketaux_news_all_paginates_and_merges_articles(app):
+    # The provider's plan caps every single request at 3 articles regardless of `limit`, so
+    # `pages` makes multiple requests and merges the results.
+    route = respx.get("https://api.marketaux.com/v1/news/all").mock(
+        side_effect=[
+            httpx.Response(200, json={"data": [{"uuid": "a1", "title": "One"}, {"uuid": "a2", "title": "Two"}]}),
+            httpx.Response(200, json={"data": [{"uuid": "a3", "title": "Three"}]}),
+        ]
+    )
+
+    result = await app.call_tool("marketaux_news_all", {"symbols": "AAPL", "pages": 2})
+    parsed = json.loads(result[0].text)
+
+    assert [a["uuid"] for a in parsed["data"]] == ["a1", "a2", "a3"]
+    assert route.call_count == 2
+    assert dict(route.calls[0].request.url.params)["page"] == "1"
+    assert dict(route.calls[1].request.url.params)["page"] == "2"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_marketaux_news_all_dedupes_articles_repeated_across_pages(app):
+    route = respx.get("https://api.marketaux.com/v1/news/all").mock(
+        side_effect=[
+            httpx.Response(200, json={"data": [{"uuid": "a1", "title": "One"}]}),
+            httpx.Response(200, json={"data": [{"uuid": "a1", "title": "One"}]}),
+        ]
+    )
+
+    result = await app.call_tool("marketaux_news_all", {"symbols": "AAPL", "pages": 2})
+    parsed = json.loads(result[0].text)
+
+    assert len(parsed["data"]) == 1
+    assert route.call_count == 2
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_marketaux_news_all_stops_paginating_once_a_page_is_empty(app):
+    route = respx.get("https://api.marketaux.com/v1/news/all").mock(
+        side_effect=[
+            httpx.Response(200, json={"data": []}),
+            httpx.Response(200, json={"data": [{"uuid": "should-never-be-fetched"}]}),
+        ]
+    )
+
+    result = await app.call_tool("marketaux_news_all", {"symbols": "AAPL", "pages": 3})
+    parsed = json.loads(result[0].text)
+
+    assert parsed["data"] == []
+    assert route.call_count == 1  # the second, would-be-empty-triggering page is never requested
+
+
+@pytest.mark.asyncio
 async def test_marketaux_tools_registration(app):
     """Verify that register_marketaux_tools registers the marketaux_news_all tool."""
     tools = await app.list_tools()

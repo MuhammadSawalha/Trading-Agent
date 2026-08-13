@@ -13,8 +13,28 @@ services:
         required: false
     environment:
       DYNAMODB_ENDPOINT: http://dynamodb-local:8000
+      AWS_PROFILE: default
+    volumes:
+      - ~/.aws:/root/.aws:ro
     ports: ["8001:8001"]
     depends_on: [dynamodb-local]
+
+  # tradingview-mcp-server (github.com/atilaahmettaner/tradingview-mcp) and stock-scanner-mcp
+  # (mcpservers.org/servers/yyordanov-tradu/stock-scanner-mcp) both speak MCP over stdio only --
+  # neither has a URL a client can just connect to. mcp-proxy (baked into each image, see
+  # services/*/Dockerfile) wraps them as subprocesses and exposes an SSE endpoint instead, so
+  # scheduler can reach them like any other HTTP dependency on the docker network.
+  tradingview-mcp:
+    build:
+      context: .
+      dockerfile: services/tradingview-mcp/Dockerfile
+    ports: ["8010:8080"]
+
+  stock-scanner-mcp:
+    build:
+      context: .
+      dockerfile: services/stock-scanner-mcp/Dockerfile
+    ports: ["8011:8080"]
 
   scheduler:
     build:
@@ -26,12 +46,14 @@ services:
     environment:
       DYNAMODB_ENDPOINT: http://dynamodb-local:8000
       OWN_MCP_SERVER_URL: http://mcp-server:8001/mcp
-      # tradingview/stock_scanner are third-party MCP servers, not defined in this compose
-      # file -- their real endpoints must be supplied via the root .env (see .env.example).
-      TRADINGVIEW_MCP_URL: ${TRADINGVIEW_MCP_URL:-}
-      STOCK_SCANNER_MCP_URL: ${STOCK_SCANNER_MCP_URL:-}
+      TRADINGVIEW_MCP_URL: http://tradingview-mcp:8080/sse
+      STOCK_SCANNER_MCP_URL: http://stock-scanner-mcp:8080/sse
+      AWS_PROFILE: default
+    volumes:
+      - ~/.aws:/root/.aws:ro
     ports: ["8002:8002"]
-    depends_on: [dynamodb-local, mcp-server]
+    depends_on: [dynamodb-local, mcp-server, tradingview-mcp, stock-scanner-mcp]
+    restart: unless-stopped
 
   api-backend:
     build:
@@ -43,6 +65,9 @@ services:
     environment:
       DYNAMODB_ENDPOINT: http://dynamodb-local:8000
       OWN_MCP_SERVER_URL: http://mcp-server:8001/mcp
+      AWS_PROFILE: default
+    volumes:
+      - ~/.aws:/root/.aws:ro
     ports: ["8080:8080"]
     depends_on: [dynamodb-local, mcp-server]
 

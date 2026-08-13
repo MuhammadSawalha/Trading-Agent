@@ -1,10 +1,13 @@
 import functools
+import logging
 from typing import Literal
 from langchain_aws import ChatBedrockConverse
 from pydantic import BaseModel
 from .state import GraphState, SpecialistOutput
 from common.dynamo import read_agent_output, write_agent_output, append_process_history
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 # Graph node / GraphState keys stay lowercase; the Dynamo AgentOutputs / ProcessHistory
 # rows use the capitalized display name, matching "Manager"/"Bull"/"Bear"/"Risk" elsewhere.
@@ -76,6 +79,8 @@ MACRO_OPTIONS_PROMPT = (
     "claims about the macro backdrop and options-implied sentiment for this symbol."
 )
 
+_MAX_ATTEMPTS = 3
+
 def make_specialist_node(name: str, system_prompt: str):
     display_name = _DISPLAY_NAMES[name]
 
@@ -87,14 +92,33 @@ def make_specialist_node(name: str, system_prompt: str):
                 return {name: cached}
 
         append_process_history(symbol, display_name, reason="pipeline_run", status="started", timestamp=datetime.now(timezone.utc))
-        try:
-            output: SpecialistOutput = _invoke_llm(system_prompt, state.get("tool_data", {}).get(name, {}))
-            write_agent_output(symbol, display_name, output)
-            append_process_history(symbol, display_name, reason="pipeline_run", status="finished", timestamp=datetime.now(timezone.utc))
-        except Exception:
-            append_process_history(symbol, display_name, reason="pipeline_run", status="failed", timestamp=datetime.now(timezone.utc))
-            raise
-        return {name: output}
+        # with_structured_output occasionally has the model return a field in a form that
+        # fails Pydantic validation outright (e.g. `claims` serialized as a JSON string
+        # instead of an actual list) rather than a substantively wrong-but-valid answer --
+        # a transient tool-calling format slip, not a real disagreement to reason about. A
+        # bounded retry recovers from that immediately; without one, this node's failure
+        # aborts the whole pipeline run for the symbol this tick, and the next opportunity to
+        # retry all the way down here depends on some *other* specialist's input data
+        # happening to change again. One terminal "started"/"failed" pair covers the whole
+        # attempt loop, not one pair per attempt.
+        last_error: Exception | None = None
+        for attempt in range(1, _MAX_ATTEMPTS + 1):
+            try:
+                output: SpecialistOutput = _invoke_llm(system_prompt, state.get("tool_data", {}).get(name, {}))
+                write_agent_output(symbol, display_name, output)
+                append_process_history(symbol, display_name, reason="pipeline_run", status="finished", timestamp=datetime.now(timezone.utc))
+                return {name: output}
+            except Exception as exc:
+                last_error = exc
+                logger.warning(
+                    "specialist %s failed for %s on attempt %d/%d, %s",
+                    display_name, symbol, attempt, _MAX_ATTEMPTS,
+                    "retrying" if attempt < _MAX_ATTEMPTS else "giving up",
+                    exc_info=True,
+                )
+
+        append_process_history(symbol, display_name, reason="pipeline_run", status="failed", timestamp=datetime.now(timezone.utc))
+        raise last_error
 
     node.__name__ = name
     return node

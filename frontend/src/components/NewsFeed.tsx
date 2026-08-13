@@ -24,7 +24,7 @@ function timeAgo(publishedAt?: string): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-export function NewsFeed() {
+export function NewsFeed({ symbols }: { symbols?: string[] } = {}) {
   const { events } = useSSE<NewsEvent>("/stream/news");
   // Dedup by uuid: the backend's per-connection dedup state resets on every SSE
   // reconnect (EventSource auto-reconnects on drops), so cached articles can be
@@ -34,7 +34,12 @@ export function NewsFeed() {
   events.forEach((e, i) => {
     deduped.set(e.uuid ?? `__no-uuid-${i}`, e);
   });
+  // `events` only ever grows for the life of this SSE connection -- an article for a symbol
+  // that's since been removed from the watchlist stays in it forever otherwise, since the
+  // backend has no way to retract an already-sent event. Re-filtering against the current
+  // watchlist on every render is what actually drops it from view.
   const sorted = [...deduped.values()]
+    .filter((e) => symbols === undefined || symbols.includes(e.symbol))
     .sort((a, b) => (b.published_at ?? "").localeCompare(a.published_at ?? ""))
     .slice(0, MAX_VISIBLE_ARTICLES);
 

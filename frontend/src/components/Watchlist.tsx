@@ -26,6 +26,17 @@ function verdictHeadline(label?: string): string {
   return label.split(",")[0];
 }
 
+const _lastUpdatedFormatter = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Asia/Jerusalem",
+  dateStyle: "medium",
+  timeStyle: "medium",
+});
+
+function formatLastUpdated(iso: string | null): string {
+  if (!iso) return "never";
+  return _lastUpdatedFormatter.format(new Date(iso));
+}
+
 export function Watchlist({
   refreshSignal = 0,
   onRowsChange,
@@ -42,6 +53,14 @@ export function Watchlist({
       onRowsChange?.(rows);
     });
   useEffect(() => { refresh(); }, [refreshSignal]);
+  // A newly-added symbol's pipeline run happens entirely server-side (scheduler tick +
+  // specialist/debate/risk/manager stages), which takes well over a minute -- without this,
+  // the row a user just added stays frozen on its initial "--/never" fetch until some other
+  // action happens to bump refreshSignal (e.g. adding a second symbol) or the page reloads.
+  useEffect(() => {
+    const id = setInterval(refresh, 10_000);
+    return () => clearInterval(id);
+  }, []);
 
   return (
     <div className="watchlist-panel">
@@ -74,7 +93,7 @@ export function Watchlist({
                     {row.verdict?.confidence != null && ` · ${Math.round(row.verdict.confidence)}%`}
                   </span>
                 </td>
-                <td className="watchlist-age">{row.last_updated ?? "never"}</td>
+                <td className="watchlist-age">{formatLastUpdated(row.last_updated)}</td>
                 <td>
                   <button
                     className="watchlist-remove"

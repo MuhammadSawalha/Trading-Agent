@@ -83,3 +83,29 @@ def test_label_reflects_direction_and_confidence():
 
     verdict = compute_verdict(bull_claims=[], bear_claims=[_claim("strong"), _claim("strong"), _claim("strong")], risk_level="low")
     assert verdict["label"].startswith("Bearish")
+
+def test_penalty_and_boost_scale_with_claim_share_not_raw_count():
+    # A flat per-claim penalty/boost saturates at just 5 flagged/rebutted or 4 corroborated
+    # claims regardless of how many claims exist overall -- on a debate with ~15 claims per
+    # side (this pipeline's normal volume), that meant confidence landed near 0% almost every
+    # time, since a healthy debate routinely produces that many flagged/rebutted claims as a
+    # byproduct of the rebuttal mechanic, not as a sign of unreliable data. Scaling by each
+    # claim's share of the total keeps a heavily-contested case penalized while not
+    # auto-maxing out on claim volume alone.
+    strong_uncontested = lambda: {
+        "strength": "strong", "corroborated": True, "flagged_unreliable": False,
+        "rebutted_undefended": False, "source_type": "other",
+    }
+    flagged = lambda: {
+        "strength": "strong", "corroborated": False, "flagged_unreliable": True,
+        "rebutted_undefended": False, "source_type": "other",
+    }
+    # 20 claims total, only 2 flagged (10%) -- well below the old formula's 5-claim saturation
+    # point, so confidence should reflect the mostly-clean, mostly-corroborated debate rather
+    # than being wiped out to 0.
+    verdict = compute_verdict(
+        bull_claims=[strong_uncontested() for _ in range(18)] + [flagged()],
+        bear_claims=[flagged()],
+        risk_level="low",
+    )
+    assert verdict["confidence"] > 50.0

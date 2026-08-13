@@ -28,39 +28,41 @@ def app():
 # (tool_name, endpoint_path, call_args, expected_query_params, mock_json_body)
 TOOL_CASES = [
     (
+        # FMP's statement/ratio/metric endpoints return a bare JSON array (one entry per
+        # fiscal period), not a single dict -- verified against the live API.
         "fmp_income_statement",
         "/income-statement",
         {"symbol": "AAPL"},
         {"symbol": "AAPL"},
-        {"revenue": 383285000000},
+        [{"revenue": 383285000000}],
     ),
     (
         "fmp_balance_sheet_statement",
         "/balance-sheet-statement",
         {"symbol": "AAPL"},
         {"symbol": "AAPL"},
-        {"totalAssets": 352755000000},
+        [{"totalAssets": 352755000000}],
     ),
     (
         "fmp_cash_flow_statement",
         "/cash-flow-statement",
         {"symbol": "AAPL"},
         {"symbol": "AAPL"},
-        {"operatingCashflow": 110543000000},
+        [{"operatingCashflow": 110543000000}],
     ),
     (
         "fmp_financial_ratios",
         "/ratios",
         {"symbol": "AAPL"},
         {"symbol": "AAPL"},
-        {"priceToEarningsRatio": 28.5},
+        [{"priceToEarningsRatio": 28.5}],
     ),
     (
         "fmp_key_metrics",
         "/key-metrics",
         {"symbol": "AAPL"},
         {"symbol": "AAPL"},
-        {"peRatio": 28.5, "marketCapitalization": 2800000000000},
+        [{"peRatio": 28.5, "marketCapitalization": 2800000000000}],
     ),
     (
         "fmp_dcf_valuation",
@@ -125,12 +127,19 @@ async def test_fmp_tool_calls_correct_endpoint(
     for key, value in expected_params.items():
         assert request_params[key] == value
 
-    # call_tool(convert_result=True) on a bare `dict`-annotated tool (no
-    # output schema) returns Sequence[ContentBlock]; for a dict-shaped
-    # return value that collapses to a single TextContent block whose
-    # .text is the JSON-serialized payload.
-    assert len(result) == 1
-    assert json.loads(result[0].text) == mock_body
+    if isinstance(mock_body, list):
+        # A `list[dict]`-annotated tool (the statement/ratio/metric endpoints) has an output
+        # schema, so call_tool(convert_result=True) returns (unstructured_content,
+        # structured_content) -- FastMCP wraps a non-dict-with-str-keys return type as
+        # {"result": ...} in the structured half.
+        _, structured = result
+        assert structured == {"result": mock_body}
+    else:
+        # A bare `dict`-annotated tool has no output schema, so call_tool returns
+        # Sequence[ContentBlock]; a dict-shaped return value collapses to a single
+        # TextContent block whose .text is the JSON-serialized payload.
+        assert len(result) == 1
+        assert json.loads(result[0].text) == mock_body
 
 
 @pytest.mark.asyncio

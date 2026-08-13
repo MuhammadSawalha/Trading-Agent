@@ -22,7 +22,7 @@ export default function App() {
         </div>
         <div style={{ width: "50%", overflowY: "auto" }}>
           <ChatPanel symbols={watchlistSymbols} />
-          <NewsFeed />
+          <NewsFeed symbols={watchlistSymbols} />
         </div>
       </div>
     </div>

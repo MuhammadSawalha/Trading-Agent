@@ -30,6 +30,31 @@ describe("NewsFeed", () => {
     expect(screen.getAllByText(/Original article/)).toHaveLength(1);
   });
 
+  it("hides articles for a symbol that's since been removed from the watchlist", () => {
+    // The SSE connection's `events` only ever grows -- an article for MSFT stays in it even
+    // after MSFT is removed, since the backend has no way to retract an already-sent event.
+    // Passing the current watchlist is what lets the feed drop it from view.
+    vi.mocked(useSSE).mockReturnValue({
+      events: [
+        { symbol: "MSFT", uuid: "1", title: "Azure article", published_at: "2026-01-01T00:00:00Z" },
+        { symbol: "GOOG", uuid: "2", title: "Google article", published_at: "2026-01-01T00:00:00Z" },
+      ],
+    });
+    render(<NewsFeed symbols={["GOOG"]} />);
+    expect(screen.queryByText(/Azure article/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Google article/)).toBeInTheDocument();
+  });
+
+  it("shows every article when no symbols filter is provided", () => {
+    vi.mocked(useSSE).mockReturnValue({
+      events: [
+        { symbol: "MSFT", uuid: "1", title: "Azure article", published_at: "2026-01-01T00:00:00Z" },
+      ],
+    });
+    render(<NewsFeed />);
+    expect(screen.getByText(/Azure article/)).toBeInTheDocument();
+  });
+
   it("caps the rendered list at 20 articles", () => {
     const events = Array.from({ length: 25 }, (_, i) => ({
       symbol: "AAPL",

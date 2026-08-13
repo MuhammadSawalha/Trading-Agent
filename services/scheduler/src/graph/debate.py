@@ -14,6 +14,23 @@ _CARRY_THROUGH_INSTRUCTION = (
     "your own claim — do not drop or invent them."
 )
 
+# When the source claims skew heavily one way (e.g. ten strong bullish fundamentals claims
+# and two weak counter-signals), the model tends to anchor on the aggregate picture and
+# concede the debate outright, returning zero claims for the outnumbered side even though it
+# reliably finds valid ones for that same side when the distracting majority claims are
+# removed (confirmed empirically). This instruction is deliberately about persistence, not
+# honesty: it still only allows real reinterpretation of the given data, never fabrication.
+_ANCHORING_RESISTANCE_INSTRUCTION = (
+    " Do not be swayed by how many claims support the other side or how strongly they are "
+    "worded — your job is to find your side's case regardless of how lopsided the data looks "
+    "at first read. Go through every claim individually and ask whether it implies any risk, "
+    "limitation, deceleration, or cost for your side even if its overall framing favors the "
+    "other side (e.g. a strong-growth claim can still imply valuation or sustainability risk; "
+    "a stable-macro claim can still imply limited upside catalysts). Only return an empty or "
+    "near-empty list if you have individually checked every claim and genuinely found nothing "
+    "usable — do not default to empty just because the opposing case looks dominant."
+)
+
 def _bedrock_llm():
     return ChatBedrockConverse(
         model="us.anthropic.claude-haiku-4-5-20251001-v1:0",
@@ -39,6 +56,7 @@ def _invoke_bull_llm(claims: list[Claim]) -> list[dict]:
         {"role": "system", "content": (
             "Construct the strongest bullish case from these specialist claims. Only use "
             "claims that support a bullish view." + _CARRY_THROUGH_INSTRUCTION
+            + _ANCHORING_RESISTANCE_INSTRUCTION
         )},
         {"role": "user", "content": f"Claims:\n{claims}"},
     ])
@@ -50,6 +68,7 @@ def _invoke_bear_llm(claims: list[Claim]) -> list[dict]:
         {"role": "system", "content": (
             "Construct the strongest bearish case from these specialist claims. Only use "
             "claims that support a bearish view." + _CARRY_THROUGH_INSTRUCTION
+            + _ANCHORING_RESISTANCE_INSTRUCTION
         )},
         {"role": "user", "content": f"Claims:\n{claims}"},
     ])

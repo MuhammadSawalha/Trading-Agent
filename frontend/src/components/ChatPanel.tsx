@@ -1,4 +1,6 @@
 import { useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { apiClient } from "../api/client";
 import "./ChatPanel.css";
 
@@ -24,9 +26,26 @@ export function ChatPanel({ symbols = [] }: { symbols?: string[] } = {}) {
     <div className="chat-panel">
       <h2 className="chat-title">Chat</h2>
       <div className="chat-messages">
-        {messages.map((m, i) => (
-          <p key={i} className={`chat-bubble chat-bubble-${m.role}`}>{m.text}</p>
-        ))}
+        {messages.map((m, i) =>
+          m.role === "assistant" ? (
+            <div key={i} className="chat-bubble chat-bubble-assistant chat-markdown">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  table: ({ children }) => (
+                    <div className="chat-markdown-table-wrap">
+                      <table>{children}</table>
+                    </div>
+                  ),
+                }}
+              >
+                {m.text}
+              </ReactMarkdown>
+            </div>
+          ) : (
+            <p key={i} className={`chat-bubble chat-bubble-${m.role}`}>{m.text}</p>
+          )
+        )}
       </div>
       <div className="chat-input-row">
         <input

@@ -10,7 +10,7 @@ def register_finnhub_tools(app: FastMCP) -> None:
         return await client.get("/stock/profile2", {"symbol": symbol})
 
     @app.tool()
-    async def finnhub_peers(symbol: str) -> dict:
+    async def finnhub_peers(symbol: str) -> list[str]:
         """Peer companies in the same industry for a stock symbol."""
         return await client.get("/stock/peers", {"symbol": symbol})
 
@@ -25,7 +25,7 @@ def register_finnhub_tools(app: FastMCP) -> None:
         return await client.get("/calendar/earnings", {"symbol": symbol})
 
     @app.tool()
-    async def finnhub_earnings_surprises(symbol: str) -> dict:
+    async def finnhub_earnings_surprises(symbol: str) -> list[dict]:
         """Historical EPS actual-vs-estimate surprises for a stock symbol."""
         return await client.get("/stock/earnings", {"symbol": symbol})
 
@@ -50,7 +50,7 @@ def register_finnhub_tools(app: FastMCP) -> None:
         return await client.get("/stock/usa-spending", {"symbol": symbol})
 
     @app.tool()
-    async def finnhub_company_news(symbol: str, from_date: str, to_date: str) -> dict:
+    async def finnhub_company_news(symbol: str, from_date: str, to_date: str) -> list[dict]:
         """Company news articles for a stock symbol within a date range (YYYY-MM-DD)."""
         return await client.get("/company-news", {"symbol": symbol, "from": from_date, "to": to_date})
 

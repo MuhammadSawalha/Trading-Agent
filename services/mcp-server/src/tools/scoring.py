@@ -73,8 +73,15 @@ def compute_verdict(bull_claims: list[Claim], bear_claims: list[Claim], risk_lev
     total_claims = len(bull_claims) + len(bear_claims)
 
     base_confidence = abs(net_score)
-    penalty = min(40.0, flagged_or_rebutted * 8.0)
-    boost = min(20.0, corroborated * 5.0)
+    # Scaled by share of claims rather than a flat per-claim count: a fixed 8/5 points per
+    # claim saturates both caps at just 5-4 claims out of this pipeline's typical 24-32,
+    # which made confidence land near 0% almost regardless of how one-sided the debate
+    # actually was (a healthy debate normally produces several flagged/rebutted claims as a
+    # byproduct of the rebuttal mechanic, not as a sign of unreliable data). Using each
+    # claim's share of the total keeps the same intent -- more contested claims lower
+    # confidence, more corroboration raises it -- without auto-maxing out on volume alone.
+    penalty = min(40.0, (flagged_or_rebutted / total_claims) * 100.0)
+    boost = min(20.0, (corroborated / total_claims) * 100.0)
     confidence = max(0.0, min(100.0, base_confidence - penalty + boost))
     confidence *= _RISK_CONFIDENCE_MULT[risk_level]
 
