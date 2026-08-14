@@ -1,0 +1,11 @@
+image: "<ECR_REPO>/frontend"
+tag: "latest"
+replicas: 2
+host: "dev.stock-research.example"
+resources:
+  requests: { cpu: "50m", memory: "64Mi" }
+  limits: { cpu: "200m", memory: "128Mi" }
+hpa:
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilization: 70
