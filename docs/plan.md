@@ -6230,6 +6230,214 @@ Expected: `ingress-nginx-controller` pod reaches `Running`; `kubectl -n ingress-
 Run: `KUBECONFIG=~/.kube/config-dev kubectl create namespace dev && kubectl create namespace prod`
 Expected: both namespaces created
 
+### Task 58: Stock Scanner MCP Helm chart
+
+Not part of the original spec — `services/stock-scanner-mcp` (an `mcp-proxy`-wrapped third-party npm MCP server, per its Dockerfile) was added to the monorepo after this plan was written, and Phase L's chart-per-workload rule (this phase's opening line) applies to it too. Same shape as Task 46's `mcp-server` chart (HPA-backed, `envFrom` omitted — the container takes no env vars per `docker-compose.yaml`), except the container port is `8080` (mcp-proxy's fixed listen port, per the Dockerfile's `EXPOSE 8080`/`--port=8080`) and probes use `tcpSocket` rather than an HTTP path: mcp-proxy exposes only `/sse` and `/messages`, with no `/healthz`-equivalent, so a socket-accept check is the only probe that doesn't depend on guessing an undocumented route.
+
+**Files:**
+- Create: `infra/k8s/helm/stock-scanner-mcp/Chart.yaml`, `values.yaml`, `templates/deployment.yaml`, `templates/service.yaml`, `templates/hpa.yaml`
+
+**Interfaces:**
+- Produces: a chart deployable as `helm upgrade --install stock-scanner-mcp infra/k8s/helm/stock-scanner-mcp -n dev -f infra/k8s/helm/stock-scanner-mcp/values-dev.yaml`; the scheduler chart's `stockScannerMcpUrl` value (Task 47) should point at this chart's Service — `http://stock-scanner-mcp:8080/sse`, matching the `/sse` path `mcp-proxy` serves and the port docker-compose maps it under.
+
+- [ ] **Step 1: Write `Chart.yaml` and `values.yaml`**
+
+```yaml
+# infra/k8s/helm/stock-scanner-mcp/Chart.yaml
+apiVersion: v2
+name: stock-scanner-mcp
+version: 0.1.0
+```
+
+```yaml
+# infra/k8s/helm/stock-scanner-mcp/values.yaml
+image: "<ECR_REPO>/stock-scanner-mcp"
+tag: "latest"
+replicas: 2
+resources:
+  requests: { cpu: "100m", memory: "256Mi" }
+  limits: { cpu: "500m", memory: "512Mi" }
+hpa:
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilization: 70
+```
+
+- [ ] **Step 2: Write the Deployment, Service, and HPA templates**
+
+```yaml
+# infra/k8s/helm/stock-scanner-mcp/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stock-scanner-mcp
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels: { app: stock-scanner-mcp }
+  template:
+    metadata:
+      labels: { app: stock-scanner-mcp }
+    spec:
+      containers:
+        - name: stock-scanner-mcp
+          image: "{{ .Values.image }}:{{ .Values.tag }}"
+          ports: [{ containerPort: 8080 }]
+          resources: {{ toYaml .Values.resources | nindent 12 }}
+          livenessProbe:
+            tcpSocket: { port: 8080 }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket: { port: 8080 }
+            initialDelaySeconds: 15
+            periodSeconds: 5
+```
+
+```yaml
+# infra/k8s/helm/stock-scanner-mcp/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: stock-scanner-mcp
+spec:
+  selector: { app: stock-scanner-mcp }
+  ports: [{ port: 8080, targetPort: 8080 }]
+```
+
+```yaml
+# infra/k8s/helm/stock-scanner-mcp/templates/hpa.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: stock-scanner-mcp
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: stock-scanner-mcp }
+  minReplicas: {{ .Values.hpa.minReplicas }}
+  maxReplicas: {{ .Values.hpa.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: {{ .Values.hpa.targetCPUUtilization }} }
+```
+
+- [ ] **Step 3: Lint and template-render the chart**
+
+Run: `helm lint infra/k8s/helm/stock-scanner-mcp && helm template infra/k8s/helm/stock-scanner-mcp`
+Expected: no lint errors; rendered manifests are valid YAML
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add infra/k8s/helm/stock-scanner-mcp
+git commit -m "feat: add Stock Scanner MCP Helm chart"
+```
+
+### Task 59: TradingView MCP Helm chart
+
+Not part of the original spec — `services/tradingview-mcp` (an `mcp-proxy`-wrapped third-party Python MCP server, per its Dockerfile) was added to the monorepo after this plan was written. Same shape as Task 58's `stock-scanner-mcp` chart — same `mcp-proxy` base image pattern, same fixed port `8080`, same `tcpSocket` probes for the same reason (no HTTP health route).
+
+**Files:**
+- Create: `infra/k8s/helm/tradingview-mcp/Chart.yaml`, `values.yaml`, `templates/deployment.yaml`, `templates/service.yaml`, `templates/hpa.yaml`
+
+**Interfaces:**
+- Produces: a chart deployable as `helm upgrade --install tradingview-mcp infra/k8s/helm/tradingview-mcp -n dev -f infra/k8s/helm/tradingview-mcp/values-dev.yaml`; the scheduler chart's `tradingviewMcpUrl` value (Task 47) should point at this chart's Service — `http://tradingview-mcp:8080/sse`.
+
+- [ ] **Step 1: Write `Chart.yaml` and `values.yaml`**
+
+```yaml
+# infra/k8s/helm/tradingview-mcp/Chart.yaml
+apiVersion: v2
+name: tradingview-mcp
+version: 0.1.0
+```
+
+```yaml
+# infra/k8s/helm/tradingview-mcp/values.yaml
+image: "<ECR_REPO>/tradingview-mcp"
+tag: "latest"
+replicas: 2
+resources:
+  requests: { cpu: "100m", memory: "256Mi" }
+  limits: { cpu: "500m", memory: "512Mi" }
+hpa:
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilization: 70
+```
+
+- [ ] **Step 2: Write the Deployment, Service, and HPA templates**
+
+```yaml
+# infra/k8s/helm/tradingview-mcp/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tradingview-mcp
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels: { app: tradingview-mcp }
+  template:
+    metadata:
+      labels: { app: tradingview-mcp }
+    spec:
+      containers:
+        - name: tradingview-mcp
+          image: "{{ .Values.image }}:{{ .Values.tag }}"
+          ports: [{ containerPort: 8080 }]
+          resources: {{ toYaml .Values.resources | nindent 12 }}
+          livenessProbe:
+            tcpSocket: { port: 8080 }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket: { port: 8080 }
+            initialDelaySeconds: 15
+            periodSeconds: 5
+```
+
+```yaml
+# infra/k8s/helm/tradingview-mcp/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: tradingview-mcp
+spec:
+  selector: { app: tradingview-mcp }
+  ports: [{ port: 8080, targetPort: 8080 }]
+```
+
+```yaml
+# infra/k8s/helm/tradingview-mcp/templates/hpa.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: tradingview-mcp
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: tradingview-mcp }
+  minReplicas: {{ .Values.hpa.minReplicas }}
+  maxReplicas: {{ .Values.hpa.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: {{ .Values.hpa.targetCPUUtilization }} }
+```
+
+- [ ] **Step 3: Lint and template-render the chart**
+
+Run: `helm lint infra/k8s/helm/tradingview-mcp && helm template infra/k8s/helm/tradingview-mcp`
+Expected: no lint errors; rendered manifests are valid YAML
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add infra/k8s/helm/tradingview-mcp
+git commit -m "feat: add TradingView MCP Helm chart"
+```
+
 ---
 
 ## Phase M — CI/CD
