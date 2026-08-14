@@ -1,0 +1,10 @@
+image: "<ECR_REPO>/api-backend"
+tag: "latest"
+replicas: 2
+resources:
+  requests: { cpu: "200m", memory: "256Mi" }
+  limits: { cpu: "500m", memory: "512Mi" }
+hpa:
+  minReplicas: 2
+  maxReplicas: 4
+  targetCPUUtilization: 70

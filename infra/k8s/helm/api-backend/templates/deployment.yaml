@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-backend
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels: { app: api-backend }
+  template:
+    metadata:
+      labels: { app: api-backend }
+    spec:
+      containers:
+        - name: api-backend
+          image: "{{ .Values.image }}:{{ .Values.tag }}"
+          ports: [{ containerPort: 8080 }]
+          envFrom:
+            - configMapRef: { name: api-backend-config }
+          resources: {{ toYaml .Values.resources | nindent 12 }}
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 5

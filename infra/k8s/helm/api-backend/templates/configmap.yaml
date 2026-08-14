@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-backend-config
+data:
+  AWS_REGION: "us-east-1"
+  OWN_MCP_SERVER_URL: "http://mcp-server:8001/mcp"
