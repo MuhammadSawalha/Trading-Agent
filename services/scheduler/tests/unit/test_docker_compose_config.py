@@ -28,9 +28,17 @@ def test_scheduler_service_no_longer_sets_the_unused_mcp_server_url_var():
     assert "MCP_SERVER_URL" not in env
 
 
-def test_scheduler_service_sets_third_party_mcp_urls_from_env_file():
-    # tradingview/stock_scanner are third-party MCP servers with no service defined in this
-    # compose file -- their endpoints must come from the .env-provided vars, not be hardcoded.
+def test_scheduler_service_points_third_party_mcp_urls_at_the_local_bridge_services():
+    # tradingview-mcp-server and stock-scanner-mcp both speak MCP over stdio only, so they're
+    # self-hosted in this compose file behind an mcp-proxy stdio-to-SSE bridge (the
+    # tradingview-mcp / stock-scanner-mcp services) rather than pointed at an external URL from
+    # .env -- there is no free, ready-to-use hosted HTTP endpoint for either.
     env = _scheduler_service()["environment"]
-    assert env["TRADINGVIEW_MCP_URL"] == "${TRADINGVIEW_MCP_URL:-}"
-    assert env["STOCK_SCANNER_MCP_URL"] == "${STOCK_SCANNER_MCP_URL:-}"
+    assert env["TRADINGVIEW_MCP_URL"] == "http://tradingview-mcp:8080/sse"
+    assert env["STOCK_SCANNER_MCP_URL"] == "http://stock-scanner-mcp:8080/sse"
+
+
+def test_scheduler_depends_on_the_bridge_services():
+    deps = _scheduler_service()["depends_on"]
+    assert "tradingview-mcp" in deps
+    assert "stock-scanner-mcp" in deps

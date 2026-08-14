@@ -78,7 +78,16 @@ async def scheduler_tick(mcp_client, now_utc: datetime, now_et: datetime, previo
     global_tool_data: dict[str, dict] | None = None  # computed once, lazily, on first symbol that needs it
 
     for symbol in watchlist:
-        is_new = symbol not in seen
+        # `symbol not in seen` alone misses one case: a symbol removed from the watchlist and
+        # then re-added within the same scheduler process's uptime. Removal purges its Manager
+        # verdict (and everything else) from Dynamo, but `seen` is in-memory and never had
+        # anything removed from it, so the re-added symbol would still read as "already seen"
+        # here -- silently skipping the is_new_symbol fetch-everything-now bypass in _is_due
+        # and leaving it stuck waiting on normal cadence/extended-hours gating despite having
+        # no data at all. Falling back to the same durable check _seed_seen_symbols uses at
+        # startup closes that gap; short-circuiting on `not in seen` first keeps this from
+        # costing a read for symbols that are genuinely new for the first time.
+        is_new = symbol not in seen or read_agent_output(symbol, "Manager") is None
         seen.add(symbol)
 
         try:
@@ -99,10 +108,9 @@ async def scheduler_tick(mcp_client, now_utc: datetime, now_et: datetime, previo
                 "tool_data": tool_data,
             })
         except Exception:
-            # One symbol's fetch or pipeline run failing (including a Risk agent that never
-            # passes its neutrality check, Task 20's RiskSchemaViolation) must never stop the
-            # rest of the watchlist from being processed this tick (spec §10) — the last good
-            # cached output for this symbol stays visible; log and move to the next symbol.
+            # One symbol's fetch or pipeline run failing must never stop the rest of the
+            # watchlist from being processed this tick (spec §10) — the last good cached
+            # output for this symbol stays visible; log and move to the next symbol.
             logger.exception("input data agent or pipeline run failed for %s, skipping this tick", symbol)
             continue
 

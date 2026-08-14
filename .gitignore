@@ -9,3 +9,4 @@ build/
 .env
 .terraform/
 *.tfstate*
+.superpowers/

@@ -16,6 +16,14 @@ def is_extended_hours(now_et: datetime) -> bool:
         return False
     return _EXTENDED_OPEN <= now_et.time() < _EXTENDED_CLOSE
 
+# Every schedule below with active_overnight=False stops fetching entirely outside extended
+# hours (4am-8pm ET, weekdays only) -- not just slower, fully paused. That pause is a normal
+# nightly gap of ~8h, widening to ~60h over a weekend (longer still across a holiday weekend).
+# A cache TTL tied only to intraday cadence expires mid-pause and blanks out data (price,
+# news, discovery dashboards, ...) that's still perfectly good, just not due for a refresh yet.
+# 4 days comfortably survives the worst-case pause with headroom to spare.
+MAX_NON_TRADING_GAP_SECONDS = 4 * 86400
+
 @dataclass(frozen=True)
 class ProviderSchedule:
     cadence_seconds_regular: int

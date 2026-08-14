@@ -5,27 +5,27 @@ def register_fmp_tools(app: FastMCP) -> None:
     client = fmp_client()
 
     @app.tool()
-    async def fmp_income_statement(symbol: str) -> dict:
+    async def fmp_income_statement(symbol: str) -> list[dict]:
         """Annual income statement (revenue, expenses, net income) for a stock symbol."""
         return await client.get("/income-statement", {"symbol": symbol})
 
     @app.tool()
-    async def fmp_balance_sheet_statement(symbol: str) -> dict:
+    async def fmp_balance_sheet_statement(symbol: str) -> list[dict]:
         """Annual balance sheet (assets, liabilities, equity) for a stock symbol."""
         return await client.get("/balance-sheet-statement", {"symbol": symbol})
 
     @app.tool()
-    async def fmp_cash_flow_statement(symbol: str) -> dict:
+    async def fmp_cash_flow_statement(symbol: str) -> list[dict]:
         """Annual cash flow statement for a stock symbol."""
         return await client.get("/cash-flow-statement", {"symbol": symbol})
 
     @app.tool()
-    async def fmp_financial_ratios(symbol: str) -> dict:
+    async def fmp_financial_ratios(symbol: str) -> list[dict]:
         """Key financial ratios (P/E, ROE, debt/equity, etc.) for a stock symbol."""
         return await client.get("/ratios", {"symbol": symbol})
 
     @app.tool()
-    async def fmp_key_metrics(symbol: str) -> dict:
+    async def fmp_key_metrics(symbol: str) -> list[dict]:
         """Per-share and valuation key metrics for a stock symbol."""
         return await client.get("/key-metrics", {"symbol": symbol})
 

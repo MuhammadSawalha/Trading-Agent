@@ -10,8 +10,11 @@ CIRCUIT_BREAKER_PROTECTED_SERVERS = {"tradingview", "stock_scanner"}
 def build_mcp_client() -> MultiServerMCPClient:
     return MultiServerMCPClient({
         "own": {"url": os.environ["OWN_MCP_SERVER_URL"], "transport": "streamable_http"},
-        "tradingview": {"url": os.environ["TRADINGVIEW_MCP_URL"], "transport": "streamable_http"},
-        "stock_scanner": {"url": os.environ["STOCK_SCANNER_MCP_URL"], "transport": "streamable_http"},
+        # Both third-party servers are locally self-hosted via an mcp-proxy stdio-to-SSE bridge
+        # (see docker-compose.yaml) since neither has a native HTTP mode of its own -- hence
+        # "sse", not "streamable_http", to match what mcp-proxy actually exposes.
+        "tradingview": {"url": os.environ["TRADINGVIEW_MCP_URL"], "transport": "sse"},
+        "stock_scanner": {"url": os.environ["STOCK_SCANNER_MCP_URL"], "transport": "sse"},
     })
 
 # Both third-party servers share ONE breaker instance (spec §7 — they depend on the same

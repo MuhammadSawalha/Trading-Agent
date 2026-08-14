@@ -18,7 +18,12 @@ type WatchlistRow = {
 };
 
 export const apiClient = {
-  getDiscoveryDashboards: () => request<Record<string, { results: unknown[] }>>("/dashboards/discovery"),
+  // Each dashboard's shape is whatever its underlying MCP tool happens to return, verbatim --
+  // tradingview-mcp wraps its list as {"result": [...]} (singular), stock-scanner-mcp returns
+  // a bare array with no wrapper at all, and only the "nothing cached yet" fallback in the
+  // api-backend route actually uses {"results": [...]} (plural). See
+  // DiscoveryGrid.tsx's extractResults for where all three get reconciled.
+  getDiscoveryDashboards: () => request<Record<string, unknown>>("/dashboards/discovery"),
   getWatchlistDashboard: () => request<WatchlistRow[]>("/dashboards/watchlist"),
   getSymbolDetail: (symbol: string) => request<{ symbol: string; agents: Record<string, unknown>; verdict: unknown }>(`/symbols/${symbol}/detail`),
   addSymbol: (symbol: string) => request(`/watchlist/${symbol}`, { method: "POST" }),

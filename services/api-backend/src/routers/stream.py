@@ -52,9 +52,54 @@ async def symbol_stream(symbol: str, _test_max_polls: int | None = None):
         media_type="text/event-stream",
     )
 
+# Marketaux tags an article for a symbol whenever that company is *mentioned* anywhere in the
+# body (a "top 10 holdings" roundup, an unrelated multi-company piece, ...), not only when the
+# article is actually about it -- the fetch itself is already restricted to language=en
+# (input_data_agent.py), but older cached articles fetched before that filter existed, plus
+# this "mentioned vs. about" gap, both still need handling here for what the news panel shows.
+#
+# Requiring the company's name to appear in the title was tried first and rejected: real
+# headlines routinely lead with a product/brand instead of the legal entity ("Azure ..." for
+# Microsoft, "Waymo ..." for Alphabet), so it excluded genuinely single-subject articles as
+# often as it excluded true multi-company roundups. What actually separates the two in
+# marketaux's own data is how many distinct companies got tagged at all: an article about one
+# company overwhelmingly tags just that one equity, while a "top holdings"/"AI giants" roundup
+# tags a handful to dozens. So an article is relevant if it's essentially single-subject
+# (at most one other tagged equity, to allow for a natural head-to-head comparison piece) OR
+# the company's name/a known brand alias is spelled out in the title regardless of entity count.
+_COMPANY_NAME_ALIASES: dict[str, tuple[str, ...]] = {
+    "GOOG": ("Google",), "GOOGL": ("Google",), "META": ("Facebook",),
+}
+_CORPORATE_SUFFIXES = (
+    " Corporation", " Corp.", " Corp", " Incorporated", " Inc.", " Inc",
+    " Co.", " Ltd.", " Ltd", " PLC", " plc", " Holdings", " Group",
+)
+_MAX_CO_TAGGED_EQUITIES = 2
+
+def _entity_display_names(symbol: str, article: dict) -> list[str]:
+    names = [symbol, *_COMPANY_NAME_ALIASES.get(symbol, ())]
+    entity = next((e for e in article.get("entities", []) if e.get("symbol") == symbol), None)
+    if entity and entity.get("name"):
+        name = entity["name"]
+        for suffix in _CORPORATE_SUFFIXES:
+            if name.endswith(suffix):
+                name = name[: -len(suffix)]
+                break
+        names.append(name)
+    return names
+
+def _is_relevant_article(symbol: str, article: dict) -> bool:
+    if article.get("language") != "en":
+        return False
+    equity_symbols = {e.get("symbol") for e in article.get("entities", []) if e.get("type") == "equity"}
+    if len(equity_symbols) <= _MAX_CO_TAGGED_EQUITIES:
+        return True
+    title = (article.get("title") or "").lower()
+    return any(name.lower() in title for name in _entity_display_names(symbol, article) if name)
+
 def _poll_news_once(last_seen_uuids: dict[str, set[str]]) -> list[dict]:
     """One full synchronous news poll: watchlist read + a per-symbol tool-result
-    read + dedup-set update, returning the new articles tagged by symbol.
+    read + dedup-set update, returning the new, relevant articles tagged by symbol.
 
     Kept as a single sync function so a whole poll cycle -- up to 31 sequential
     blocking DynamoDB calls -- costs one thread hop instead of 31.
@@ -62,7 +107,7 @@ def _poll_news_once(last_seen_uuids: dict[str, set[str]]) -> list[dict]:
     new_events = []
     for symbol in read_watchlist():
         result = read_tool_result(f"{symbol}#marketaux_news_all") or {}
-        articles = result.get("data", [])
+        articles = [a for a in result.get("data", []) if _is_relevant_article(symbol, a)]
         seen = last_seen_uuids.setdefault(symbol, set())
         new_events.extend(
             {"symbol": symbol, **a} for a in articles if a.get("uuid") not in seen

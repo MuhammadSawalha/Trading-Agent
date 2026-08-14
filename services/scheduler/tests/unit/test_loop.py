@@ -42,19 +42,24 @@ async def test_new_symbol_triggers_a_graph_run(
     mock_graph.ainvoke.assert_awaited_once()
 
 @pytest.mark.asyncio
+@patch("src.loop.read_agent_output")
 @patch("src.loop.read_tool_result")
 @patch("src.loop.fetch_discovery_dashboards", new_callable=AsyncMock)
 @patch("src.loop.build_graph")
 @patch("src.loop.run_input_data_agent_for_symbol")
 @patch("src.loop.read_watchlist")
 async def test_no_change_skips_graph_run(
-    mock_watchlist, mock_input_agent, mock_build_graph, mock_discovery, mock_read_tool_result
+    mock_watchlist, mock_input_agent, mock_build_graph, mock_discovery, mock_read_tool_result,
+    mock_read_agent_output,
 ):
     # read_tool_result is mocked (rather than left to hit real DynamoDB) so that if the
     # skip-on-no-change guard were ever removed, _build_tool_data would succeed and the test
     # would fail on a real assertion -- not incidentally pass because an unrelated AWS call
     # raised and got swallowed by the per-symbol try/except.
     mock_read_tool_result.return_value = None
+    # AAPL already has a Manager verdict -- genuinely not new, distinct from the re-added-
+    # after-removal case covered separately below.
+    mock_read_agent_output.return_value = {"verdict": "buy"}
     mock_watchlist.return_value = ["AAPL"]
     mock_input_agent.return_value = InputDataAgentResult(changed_specialists=set(), is_new_symbol=False)
     mock_graph = mock_build_graph.return_value
@@ -65,6 +70,36 @@ async def test_no_change_skips_graph_run(
         now_et=datetime(2026, 1, 5, 10, 0, tzinfo=ET), previously_seen={"AAPL"},
     )
     mock_graph.ainvoke.assert_not_awaited()
+
+@pytest.mark.asyncio
+@patch("src.loop.read_agent_output")
+@patch("src.loop.read_tool_result")
+@patch("src.loop.fetch_discovery_dashboards", new_callable=AsyncMock)
+@patch("src.loop.build_graph")
+@patch("src.loop.run_input_data_agent_for_symbol")
+@patch("src.loop.read_watchlist")
+async def test_symbol_removed_and_readded_within_the_same_process_is_treated_as_new_again(
+    mock_watchlist, mock_input_agent, mock_build_graph, mock_discovery, mock_read_tool_result,
+    mock_read_agent_output,
+):
+    # AAPL is in the in-memory `seen` set from before it was removed from the watchlist, but
+    # its Manager verdict (and everything else) was purged by the removal -- re-adding it must
+    # be treated as genuinely new (is_new_symbol=True passed through), not silently stuck
+    # behind normal cadence/extended-hours gating with no data to show for it.
+    mock_read_tool_result.return_value = None
+    mock_read_agent_output.return_value = None  # purged on removal
+    mock_watchlist.return_value = ["AAPL"]
+    mock_input_agent.return_value = InputDataAgentResult(changed_specialists={"fundamentals"}, is_new_symbol=True)
+    mock_graph = mock_build_graph.return_value
+    mock_graph.ainvoke = AsyncMock(return_value={})
+
+    await scheduler_tick(
+        mcp_client=object(), now_utc=datetime(2026, 1, 5, 15, 0),
+        now_et=datetime(2026, 1, 5, 10, 0, tzinfo=ET), previously_seen={"AAPL"},
+    )
+
+    mock_input_agent.assert_awaited_once()
+    assert mock_input_agent.call_args.args[3] is True  # is_new_symbol passed to run_input_data_agent_for_symbol
 
 @pytest.mark.asyncio
 @patch("src.loop.read_tool_result")

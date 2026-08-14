@@ -1,0 +1,98 @@
+.watchlist-panel {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.watchlist-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.watchlist-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.watchlist-count {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
+.watchlist-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.watchlist-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.watchlist-row {
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.watchlist-row td {
+  padding: 8px 14px;
+  border-top: 1px solid var(--row-border);
+}
+
+.watchlist-symbol {
+  font-weight: 600;
+}
+
+.watchlist-price {
+  font-variant-numeric: tabular-nums;
+}
+
+.watchlist-change-positive {
+  color: var(--positive);
+  font-variant-numeric: tabular-nums;
+}
+
+.watchlist-change-negative {
+  color: var(--negative);
+  font-variant-numeric: tabular-nums;
+}
+
+.watchlist-verdict-pill {
+  border-radius: 20px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.watchlist-verdict-positive {
+  background: rgba(61, 220, 132, 0.15);
+  color: var(--positive);
+}
+
+.watchlist-verdict-negative {
+  background: rgba(255, 107, 107, 0.15);
+  color: var(--negative);
+}
+
+.watchlist-verdict-neutral {
+  background: rgba(139, 147, 167, 0.15);
+  color: var(--neutral);
+}
+
+.watchlist-age {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.watchlist-remove {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 14px;
+}

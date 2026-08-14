@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+from typing import Callable
 
 def diff_changed(previous: dict | None, current: dict, is_news: bool) -> bool:
     if previous is None:
@@ -24,6 +25,10 @@ class FetchSpec:
     schedule_key: str
     per_symbol: bool
     is_news: bool = False
+    # Most per-symbol tools take a single `symbol` kwarg, matching the default params built
+    # below. A few (marketaux_news_all takes `symbols`; finnhub_company_news also needs a
+    # from_date/to_date range) don't -- for those this overrides the default entirely.
+    params_fn: Callable[[str, date], dict] | None = None
 
 FETCH_PLAN: list[FetchSpec] = [
     # Fundamentals — Finnhub static (9)
@@ -47,8 +52,19 @@ FETCH_PLAN: list[FetchSpec] = [
     FetchSpec("fmp_dividends_calendar", "own", "fundamentals", "fmp", False),
     FetchSpec("fmp_stock_splits_calendar", "own", "fundamentals", "fmp", False),
     # Sentiment — Marketaux (news-diff by UUID) + Finnhub company news
-    FetchSpec("marketaux_news_all", "own", "sentiment", "marketaux", True, is_news=True),
-    FetchSpec("finnhub_company_news", "own", "sentiment", "finnhub_live", True, is_news=True),
+    # marketaux_news_all takes `symbols` (plural, comma-separated) not `symbol` — the default
+    # single-`symbol` params below don't match its signature. `language: "en"` keeps
+    # non-English wire coverage (the same story runs in a dozen languages) out of both the
+    # UI feed and the Sentiment specialist's prompt. `pages` is set below, alongside the daily
+    # cap accounting it has to stay in sync with -- see _MARKETAUX_PAGES.
+    FetchSpec("marketaux_news_all", "own", "sentiment", "marketaux", True, is_news=True,
+              params_fn=lambda symbol, today: {"symbols": symbol, "language": "en", "pages": _MARKETAUX_PAGES}),
+    # finnhub_company_news also needs a from_date/to_date range that the default params don't
+    # provide — a trailing 7-day window is enough for a "recent company news" feed.
+    FetchSpec("finnhub_company_news", "own", "sentiment", "finnhub_live", True, is_news=True,
+              params_fn=lambda symbol, today: {
+                  "symbol": symbol, "from_date": str(today - timedelta(days=7)), "to_date": str(today),
+              }),
     # Technical — Finnhub quote uses finnhub_live (its own per-minute quota, sliding-window
     # limited). TradingView-backed per-symbol technicals are a DIFFERENT provider with no
     # per-minute quota of its own but the same circuit-breaker-protected shared upstream as
@@ -74,8 +90,11 @@ FETCH_PLAN: list[FetchSpec] = [
     FetchSpec("fred_consumer_sentiment", "own", "macro_options", "fred_slow", False),
     FetchSpec("fred_vix", "own", "macro_options", "fred_vix", False),
     FetchSpec("fmp_economic_indicators", "own", "macro_options", "fmp", False),
-    FetchSpec("options_chain", "tradingview", "macro_options", "technical_options", True),
-    FetchSpec("unusual_options_activity", "tradingview", "macro_options", "technical_options", True),
+    # Both verified against the live stock_scanner server: it (not tradingview) is the one that
+    # actually exposes options_chain/options_unusual_activity, both requiring `symbol` -- the
+    # default per-symbol params below already provide that.
+    FetchSpec("options_chain", "stock_scanner", "macro_options", "technical_options", True),
+    FetchSpec("options_unusual_activity", "stock_scanner", "macro_options", "technical_options", True),
 ]
 
 import logging
@@ -84,15 +103,21 @@ from common.dynamo import (
     read_tool_result, write_tool_result, append_process_history,
     record_fetch_attempt, get_last_fetch_attempt,
 )
-from .schedule_config import SCHEDULES, is_regular_market_hours, is_extended_hours
+from .schedule_config import SCHEDULES, MAX_NON_TRADING_GAP_SECONDS, is_regular_market_hours, is_extended_hours
 from .rate_limit.sliding_window import SlidingWindowLimiter
 from .rate_limit.daily_cap import DailyCapScheduler
 
 logger = logging.getLogger(__name__)
 
+# All of these are gated by active_overnight=False (see MAX_NON_TRADING_GAP_SECONDS) and so go
+# unfetched for up to a weekend at a time -- every entry here must outlive that pause, not just
+# its own intraday cadence, or the cached value expires mid-pause and the UI shows nothing for
+# data that's still perfectly good.
 _TTL_SECONDS = {
-    "marketaux": 1800, "fmp": 3 * 86400, "finnhub_static": 86400,
-    "finnhub_live": 60, "fred_slow": 86400, "fred_vix": 3600, "technical_options": 1800,
+    "marketaux": MAX_NON_TRADING_GAP_SECONDS, "fmp": MAX_NON_TRADING_GAP_SECONDS,
+    "finnhub_static": MAX_NON_TRADING_GAP_SECONDS, "finnhub_live": MAX_NON_TRADING_GAP_SECONDS,
+    "fred_slow": MAX_NON_TRADING_GAP_SECONDS, "fred_vix": MAX_NON_TRADING_GAP_SECONDS,
+    "technical_options": MAX_NON_TRADING_GAP_SECONDS,
 }
 
 @dataclass
@@ -107,6 +132,17 @@ class InputDataAgentResult:
 _finnhub_live_limiter = SlidingWindowLimiter(max_calls=55, window_seconds=60)
 _marketaux_daily_backstop = DailyCapScheduler(daily_cap=100, safety_margin=10)
 
+# marketaux_news_all's plan caps every individual request at 3 articles regardless of `limit`,
+# which is too few to survive the UI's own relevance filtering (stream.py) and still leave a
+# handful of genuinely-relevant articles per symbol. Paginating widens the pool, but each page
+# is a full extra request against the SAME daily quota `_marketaux_daily_backstop` protects --
+# so every `.allow()` call for marketaux below spends `_MARKETAUX_PAGES` tokens, not 1, to keep
+# the backstop's accounting honest about how many real HTTP calls a "due" fetch actually costs.
+# daily_cap itself is left untouched: 100 already tracks the provider's real daily quota, not
+# an arbitrary internal guess, so it's not ours to raise -- widening the pool trades fetch
+# *frequency* for fetch *richness* within that same fixed ceiling.
+_MARKETAUX_PAGES = 2
+
 def _is_due(spec: FetchSpec, pk: str, now_utc: datetime, now_et: datetime, is_new_symbol: bool) -> bool:
     if is_new_symbol:
         # Still spend a token on the shared limiter/cap for accounting purposes even though
@@ -115,7 +151,7 @@ def _is_due(spec: FetchSpec, pk: str, now_utc: datetime, now_et: datetime, is_ne
         if spec.schedule_key == "finnhub_live":
             _finnhub_live_limiter.allow(now_utc)
         elif spec.schedule_key == "marketaux":
-            _marketaux_daily_backstop.allow(now_utc)
+            _marketaux_daily_backstop.allow(now_utc, count=_MARKETAUX_PAGES)
         return True
 
     schedule = SCHEDULES[spec.schedule_key]
@@ -140,7 +176,7 @@ def _is_due(spec: FetchSpec, pk: str, now_utc: datetime, now_et: datetime, is_ne
     if spec.schedule_key == "finnhub_live":
         return _finnhub_live_limiter.allow(now_utc)
     if spec.schedule_key == "marketaux":
-        return _marketaux_daily_backstop.allow(now_utc)
+        return _marketaux_daily_backstop.allow(now_utc, count=_MARKETAUX_PAGES)
 
     return True
 
@@ -163,7 +199,10 @@ async def run_input_data_agent_for_symbol(
         if not _is_due(spec, pk, now_utc, now_et, is_new_symbol):
             continue
 
-        params = {"symbol": symbol} if spec.per_symbol else {}
+        if spec.params_fn:
+            params = spec.params_fn(symbol, now_utc.date())
+        else:
+            params = {"symbol": symbol} if spec.per_symbol else {}
         try:
             current = await call_tool(mcp_client, spec.server, spec.tool_name, **params)
             record_fetch_attempt(pk, now_utc)

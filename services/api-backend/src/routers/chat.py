@@ -29,7 +29,11 @@ def _invoke_chat_llm(question: str, context: str, history_context: str) -> str:
         {"role": "system", "content": (
             "You are a research assistant grounded strictly in the cached analysis below. "
             "Never present the composite score as investment advice or a validated trading "
-            "signal — it is research output only."
+            "signal — it is research output only. Match your reply's length and content to "
+            "what was actually asked: respond to greetings and small talk briefly and "
+            "naturally, without summarizing the data. Only draw on the cached analysis, and "
+            "only as much of it, as the question calls for — don't volunteer a full research "
+            "dump unless the user actually asks for an overview."
         )},
         {"role": "user", "content": f"Context:\n{context}\n\n{history_context}\n\nQuestion: {question}"},
     ])

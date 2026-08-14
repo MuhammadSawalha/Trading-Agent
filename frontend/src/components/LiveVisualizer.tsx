@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useSSE } from "../hooks/useSSE";
+import "./LiveVisualizer.css";
 
 type PipelineEvent = { agent: string; status: "started" | "finished" | "failed"; timestamp: string; reason: string };
 
@@ -20,9 +21,10 @@ export function LiveVisualizer({ symbol }: { symbol: string }) {
   const states = computeStates(events);
 
   return (
-    <div>
-      <h2>Live Pipeline: {symbol}</h2>
-      <div style={{ display: "flex", gap: "0.5rem" }}>
+    <div className="live-viz">
+      <div className="live-viz-eyebrow">Live Pipeline</div>
+      <h2 className="live-viz-symbol">{symbol}</h2>
+      <div className="live-viz-nodes">
         {NODE_ORDER.map((node) => (
           <div
             key={node}
@@ -30,11 +32,17 @@ export function LiveVisualizer({ symbol }: { symbol: string }) {
             onClick={() => setSelected(node)}
             className={`viz-node viz-${states[node]}`}
           >
-            {node}: {states[node]}
+            <div className="viz-node-name">{node.replace("_", "/")}</div>
+            <div className="viz-node-state">
+              {states[node]}
+              {states[node] === "running" && "…"}
+            </div>
           </div>
         ))}
       </div>
-      {selected && <pre>{JSON.stringify(events.filter((e) => e.agent === selected), null, 2)}</pre>}
+      {selected && (
+        <pre className="live-viz-events">{JSON.stringify(events.filter((e) => e.agent === selected), null, 2)}</pre>
+      )}
     </div>
   );
 }

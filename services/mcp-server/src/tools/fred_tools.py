@@ -1,5 +1,12 @@
+from datetime import date, timedelta
 from mcp.server.fastmcp import FastMCP
 from ..clients.fred_client import fred_client
+
+# Unbounded FRED series calls return full history back to each series' inception (CPI to
+# 1947, unemployment to 1948, etc.) -- tens to hundreds of KB per series that gets fed
+# straight into the macro_options specialist prompt. Two years of history is enough for a
+# macro-trend read and keeps every series (even the daily ones) small.
+_DEFAULT_LOOKBACK = timedelta(days=730)
 
 _SERIES_TOOLS = {
     "fred_federal_funds_rate": ("DFF", "Effective federal funds rate, daily."),
@@ -19,8 +26,7 @@ def register_fred_tools(app: FastMCP) -> None:
     def make_series_tool(series_id: str):
         async def tool(observation_start: str | None = None, observation_end: str | None = None) -> dict:
             params = {"series_id": series_id, "file_type": "json"}
-            if observation_start:
-                params["observation_start"] = observation_start
+            params["observation_start"] = observation_start or str(date.today() - _DEFAULT_LOOKBACK)
             if observation_end:
                 params["observation_end"] = observation_end
             return await client.get("/series/observations", params)

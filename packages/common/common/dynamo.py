@@ -162,3 +162,47 @@ def add_to_watchlist(symbol: str) -> None:
 def remove_from_watchlist(symbol: str) -> None:
     symbols = [s for s in read_watchlist() if s != symbol]
     write_tool_result(_WATCHLIST_PK, {"symbols": symbols}, ttl_seconds=_WATCHLIST_TTL_SECONDS)
+    delete_symbol_data(symbol)
+
+def delete_symbol_data(symbol: str) -> None:
+    """Purges every trace of a symbol's derived/cached state -- ToolResults (raw fetches AND
+    the LAST_ATTEMPT cadence markers, both keyed f"{symbol}#..."), AgentOutputs, and
+    ProcessHistory -- so re-adding the symbol later is a genuine cold start instead of
+    resuming mid-stream on leftover data from before it was removed."""
+    _delete_tool_results_for_symbol(symbol)
+    _delete_agent_outputs_for_symbol(symbol)
+    _delete_process_history_for_symbol(symbol)
+
+def _delete_tool_results_for_symbol(symbol: str) -> None:
+    # ToolResults' only key is `pk`, with no symbol attribute to Query on, so finding every
+    # f"{symbol}#..." row (all per-symbol fetches plus their LAST_ATTEMPT markers) means
+    # scanning the whole table. Fine at this table's scale (one row per watchlist symbol per
+    # tool, capped at 30 symbols) -- a GSI would be overkill for a purge that only runs on
+    # removal, not on any hot path.
+    table = _dynamo_resource().Table("ToolResults")
+    prefix = f"{symbol}#"
+    scan_kwargs = {
+        "FilterExpression": boto3.dynamodb.conditions.Attr("pk").begins_with(prefix),
+        "ProjectionExpression": "pk",
+    }
+    with table.batch_writer() as batch:
+        while True:
+            response = table.scan(**scan_kwargs)
+            for item in response["Items"]:
+                batch.delete_item(Key={"pk": item["pk"]})
+            if "LastEvaluatedKey" not in response:
+                break
+            scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+
+def _delete_agent_outputs_for_symbol(symbol: str) -> None:
+    table = _dynamo_resource().Table("AgentOutputs")
+    response = table.query(KeyConditionExpression=boto3.dynamodb.conditions.Key("symbol").eq(symbol))
+    with table.batch_writer() as batch:
+        for item in response["Items"]:
+            batch.delete_item(Key={"symbol": item["symbol"], "agent_name": item["agent_name"]})
+
+def _delete_process_history_for_symbol(symbol: str) -> None:
+    table = _dynamo_resource().Table("ProcessHistory")
+    with table.batch_writer() as batch:
+        for entry in query_process_history(symbol):
+            batch.delete_item(Key={"symbol": entry["symbol"], "sk": entry["sk"]})

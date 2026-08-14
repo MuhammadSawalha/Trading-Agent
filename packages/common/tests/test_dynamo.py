@@ -9,6 +9,7 @@ from common.dynamo import (
     append_process_history, query_process_history,
     get_latest_process_history_entry,
     record_fetch_attempt, get_last_fetch_attempt,
+    read_watchlist, add_to_watchlist, remove_from_watchlist,
     ensure_tables_for_test,
 )
 
@@ -172,3 +173,40 @@ def test_recording_an_attempt_does_not_disturb_the_actual_tool_result(aws, monke
     write_tool_result("AAPL#Quote", {"price": 150}, ttl_seconds=3600)
     record_fetch_attempt("AAPL#Quote", datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc))
     assert read_tool_result("AAPL#Quote") == {"price": 150}
+
+def test_removing_from_watchlist_purges_all_cached_and_derived_state(aws, monkeypatch):
+    # Re-adding a symbol after removal must be a genuine cold start, not a resume on
+    # leftover data -- so removal has to clear every table a symbol's data lives in.
+    monkeypatch.setenv("TOOL_PAYLOADS_BUCKET", "tool-payloads-test")
+    add_to_watchlist("AAPL")
+    write_tool_result("AAPL#finnhub_quote", {"c": 150.0}, ttl_seconds=3600)
+    write_tool_result("AAPL#marketaux_news_all", {"data": []}, ttl_seconds=3600)
+    record_fetch_attempt("AAPL#finnhub_quote", datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc))
+    write_agent_output("AAPL", "Manager", {"net_score": 10})
+    write_agent_output("AAPL", "Fundamentals", {"claims": []})
+    append_process_history("AAPL", "Manager", reason="pipeline_run", status="finished",
+                            timestamp=datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc))
+
+    remove_from_watchlist("AAPL")
+
+    assert "AAPL" not in read_watchlist()
+    assert read_tool_result("AAPL#finnhub_quote") is None
+    assert read_tool_result("AAPL#marketaux_news_all") is None
+    assert get_last_fetch_attempt("AAPL#finnhub_quote") is None
+    assert read_agent_output("AAPL", "Manager") is None
+    assert read_agent_output("AAPL", "Fundamentals") is None
+    assert query_process_history("AAPL") == []
+
+def test_removing_from_watchlist_does_not_disturb_other_symbols(aws, monkeypatch):
+    monkeypatch.setenv("TOOL_PAYLOADS_BUCKET", "tool-payloads-test")
+    add_to_watchlist("AAPL")
+    add_to_watchlist("MSFT")
+    write_tool_result("AAPL#finnhub_quote", {"c": 150.0}, ttl_seconds=3600)
+    write_tool_result("MSFT#finnhub_quote", {"c": 490.0}, ttl_seconds=3600)
+    write_agent_output("MSFT", "Manager", {"net_score": 5})
+
+    remove_from_watchlist("AAPL")
+
+    assert read_watchlist() == ["MSFT"]
+    assert read_tool_result("MSFT#finnhub_quote") == {"c": 490.0}
+    assert read_agent_output("MSFT", "Manager") == {"net_score": 5}

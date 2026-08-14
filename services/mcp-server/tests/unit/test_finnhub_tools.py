@@ -35,11 +35,14 @@ TOOL_CASES = [
         {"name": "Apple Inc.", "marketCapitalization": 3000000},
     ),
     (
+        # Finnhub's real /stock/peers response is a bare JSON array of ticker strings, not a
+        # dict wrapping one -- verified against the live API. A dict-shaped mock here would
+        # test the tool against a shape it never actually receives in production.
         "finnhub_peers",
         "/stock/peers",
         {"symbol": "AAPL"},
         {"symbol": "AAPL"},
-        {"peers": ["MSFT", "GOOGL"]},
+        ["MSFT", "GOOGL"],
     ),
     (
         "finnhub_basic_financials",
@@ -56,11 +59,13 @@ TOOL_CASES = [
         {"earningsCalendar": []},
     ),
     (
+        # Real /stock/earnings response is a bare JSON array of surprise records, not
+        # {"earnings": [...]} -- verified against the live API.
         "finnhub_earnings_surprises",
         "/stock/earnings",
         {"symbol": "AAPL"},
         {"symbol": "AAPL"},
-        {"earnings": []},
+        [{"symbol": "AAPL", "actual": 1.91, "estimate": 1.93}],
     ),
     (
         "finnhub_insider_transactions",
@@ -91,11 +96,13 @@ TOOL_CASES = [
         {"data": []},
     ),
     (
+        # Real /company-news response is a bare JSON array of article records, not
+        # {"news": [...]} -- verified against the live API.
         "finnhub_company_news",
         "/company-news",
         {"symbol": "AAPL", "from_date": "2026-01-01", "to_date": "2026-01-08"},
         {"symbol": "AAPL", "from": "2026-01-01", "to": "2026-01-08"},
-        {"news": []},
+        [{"headline": "Apple announces new product", "id": 1}],
     ),
     (
         "finnhub_quote",
@@ -132,12 +139,19 @@ async def test_finnhub_tool_calls_correct_endpoint(
     for key, value in expected_params.items():
         assert request_params[key] == value
 
-    # call_tool(convert_result=True) on a bare `dict`-annotated tool (no
-    # output schema) returns Sequence[ContentBlock]; for a dict-shaped
-    # return value that collapses to a single TextContent block whose
-    # .text is the JSON-serialized payload.
-    assert len(result) == 1
-    assert json.loads(result[0].text) == mock_body
+    if isinstance(mock_body, list):
+        # A `list[...]`-annotated tool (finnhub_peers, finnhub_earnings_surprises,
+        # finnhub_company_news) has an output schema, so call_tool(convert_result=True)
+        # returns (unstructured_content, structured_content) -- FastMCP wraps a
+        # non-dict-with-str-keys return type as {"result": ...} in the structured half.
+        _, structured = result
+        assert structured == {"result": mock_body}
+    else:
+        # A bare `dict`-annotated tool has no output schema, so call_tool returns
+        # Sequence[ContentBlock]; a dict-shaped return value collapses to a single
+        # TextContent block whose .text is the JSON-serialized payload.
+        assert len(result) == 1
+        assert json.loads(result[0].text) == mock_body
 
 
 @pytest.mark.asyncio

@@ -12,46 +12,54 @@ type Claim = {
   avg_volume?: number | null;
 };
 
+const RISK_LABELS: Record<string, string> = { low: "Low", medium: "Medium", high: "High" };
+
 export function ResultsChart({
   verdict,
   bullClaims = [],
   bearClaims = [],
+  riskLevel,
 }: {
   verdict: Verdict;
   bullClaims?: Claim[];
   bearClaims?: Claim[];
+  riskLevel?: string;
 }) {
   const netScore = verdict.net_score ?? 0;
+  const bullShare = Math.max(0, Math.min(100, 50 + netScore / 2));
   return (
     <div>
-      <h3>{verdict.label ?? "No verdict yet"}</h3>
-      <div style={{ width: "100%", background: "#eee", height: "1rem" }}>
-        <div
-          style={{
-            width: `${Math.abs(netScore) / 2}%`,
-            marginLeft: netScore >= 0 ? "50%" : `${50 - Math.abs(netScore) / 2}%`,
-            background: netScore >= 0 ? "green" : "red",
-            height: "1rem",
-          }}
-        />
-      </div>
-      <p>Confidence: {verdict.confidence ?? 0}%</p>
-      <div style={{ display: "flex", gap: "1rem" }}>
-        <div>
-          <h4>Bull case</h4>
-          <ul>
-            {bullClaims.map((claim, i) => (
-              <li key={i}>{claim.rationale} <small>({claim.strength})</small></li>
-            ))}
-          </ul>
+      <div className="results-section-label">Result</div>
+      <div className="results-bar-row">
+        <span className="results-bar-label results-bar-label-bear">Bear</span>
+        <div className="results-bar-track">
+          <div className="results-bar-bear" style={{ width: `${100 - bullShare}%` }} />
+          <div className="results-bar-bull" style={{ width: `${bullShare}%` }} />
         </div>
-        <div>
-          <h4>Bear case</h4>
-          <ul>
-            {bearClaims.map((claim, i) => (
-              <li key={i}>{claim.rationale} <small>({claim.strength})</small></li>
-            ))}
-          </ul>
+        <span className="results-bar-label results-bar-label-bull">Bull</span>
+      </div>
+      {riskLevel && (
+        <div className="results-risk">
+          <div className="results-risk-label">Risk level</div>
+          <div className="results-risk-badge-row">
+            <span className={`results-risk-badge results-risk-${riskLevel}`}>
+              {RISK_LABELS[riskLevel] ?? riskLevel}
+            </span>
+          </div>
+        </div>
+      )}
+      <div className="results-cases">
+        <div className="results-case">
+          <div className="results-case-title results-case-title-bull">Bull case</div>
+          {bullClaims.map((claim, i) => (
+            <div className="results-case-item" key={i}>&bull; {claim.rationale}</div>
+          ))}
+        </div>
+        <div className="results-case">
+          <div className="results-case-title results-case-title-bear">Bear case</div>
+          {bearClaims.map((claim, i) => (
+            <div className="results-case-item" key={i}>&bull; {claim.rationale}</div>
+          ))}
         </div>
       </div>
     </div>
