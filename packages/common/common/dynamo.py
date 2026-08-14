@@ -28,6 +28,10 @@ def _dynamo_resource():
 def _s3_client():
     return boto3.client("s3", region_name=os.environ.get("AWS_REGION", "us-east-1"))
 
+def _table_name(base: str) -> str:
+    suffix = os.environ.get("DYNAMODB_TABLE_SUFFIX", "")
+    return f"{base}{suffix}" if suffix else base
+
 def ensure_tables_for_test() -> None:
     """Test-only helper: creates all three tables against the current (mocked) DynamoDB."""
     import sys
@@ -38,7 +42,7 @@ def ensure_tables_for_test() -> None:
         client.create_table(**definition)
 
 def write_tool_result(pk: str, payload: dict, ttl_seconds: int) -> None:
-    table = _dynamo_resource().Table("ToolResults")
+    table = _dynamo_resource().Table(_table_name("ToolResults"))
     expires_at = int(datetime.now(timezone.utc).timestamp()) + ttl_seconds
     serialized = json.dumps(payload)
     if len(serialized.encode()) > _OFFLOAD_THRESHOLD_BYTES:
@@ -50,7 +54,7 @@ def write_tool_result(pk: str, payload: dict, ttl_seconds: int) -> None:
         table.put_item(Item={"pk": pk, "payload": serialized, "expires_at": expires_at})
 
 def read_tool_result(pk: str) -> dict | None:
-    table = _dynamo_resource().Table("ToolResults")
+    table = _dynamo_resource().Table(_table_name("ToolResults"))
     item = table.get_item(Key={"pk": pk}).get("Item")
     if item is None:
         return None
@@ -60,7 +64,7 @@ def read_tool_result(pk: str) -> dict | None:
     return json.loads(item["payload"])
 
 def write_agent_output(symbol: str, agent_name: str, payload: dict) -> None:
-    table = _dynamo_resource().Table("AgentOutputs")
+    table = _dynamo_resource().Table(_table_name("AgentOutputs"))
     table.put_item(Item={
         "symbol": symbol, "agent_name": agent_name,
         "payload": json.dumps(payload),
@@ -68,13 +72,13 @@ def write_agent_output(symbol: str, agent_name: str, payload: dict) -> None:
     })
 
 def read_agent_output(symbol: str, agent_name: str) -> dict | None:
-    table = _dynamo_resource().Table("AgentOutputs")
+    table = _dynamo_resource().Table(_table_name("AgentOutputs"))
     item = table.get_item(Key={"symbol": symbol, "agent_name": agent_name}).get("Item")
     return json.loads(item["payload"]) if item else None
 
 def append_process_history(symbol: str, agent: str, reason: str, status: str, timestamp: datetime) -> None:
     timestamp = _to_utc(timestamp)
-    table = _dynamo_resource().Table("ProcessHistory")
+    table = _dynamo_resource().Table(_table_name("ProcessHistory"))
     sk = f"{timestamp.isoformat()}#{agent}"
     table.put_item(Item={
         "symbol": symbol, "sk": sk, "agent": agent,
@@ -93,7 +97,7 @@ def query_process_history(symbol: str, since: datetime | None = None) -> list[di
     # ISO-8601 timestamp string is a strict prefix of any `sk` sharing that timestamp, so
     # Key("sk").gte(since.isoformat()) is a correct inclusive lower bound. This lets
     # DynamoDB itself skip everything older instead of fetching it and discarding it here.
-    table = _dynamo_resource().Table("ProcessHistory")
+    table = _dynamo_resource().Table(_table_name("ProcessHistory"))
     key_condition = boto3.dynamodb.conditions.Key("symbol").eq(symbol)
     if since is not None:
         since_iso = _to_utc(since).isoformat()
@@ -114,7 +118,7 @@ def get_latest_process_history_entry(symbol: str) -> dict | None:
     # history. ScanIndexForward=False returns items in descending `sk` order, and since
     # `sk` is timestamp-prefixed (see append_process_history), the first item is the
     # newest -- so Limit=1 reads exactly one item instead of draining the whole table.
-    table = _dynamo_resource().Table("ProcessHistory")
+    table = _dynamo_resource().Table(_table_name("ProcessHistory"))
     response = table.query(
         KeyConditionExpression=boto3.dynamodb.conditions.Key("symbol").eq(symbol),
         ScanIndexForward=False,
@@ -131,12 +135,12 @@ def record_fetch_attempt(pk: str, timestamp: datetime) -> None:
     which only writes on a diff — cadence enforcement (Task 16's _is_due) needs "when did we
     last try" even when the value has been stable for a while and nothing gets rewritten."""
     timestamp = _to_utc(timestamp)
-    table = _dynamo_resource().Table("ToolResults")
+    table = _dynamo_resource().Table(_table_name("ToolResults"))
     expires_at = int(timestamp.timestamp()) + _FETCH_ATTEMPT_TTL_SECONDS
     table.put_item(Item={"pk": f"{pk}#LAST_ATTEMPT", "attempted_at": timestamp.isoformat(), "expires_at": expires_at})
 
 def get_last_fetch_attempt(pk: str) -> datetime | None:
-    table = _dynamo_resource().Table("ToolResults")
+    table = _dynamo_resource().Table(_table_name("ToolResults"))
     item = table.get_item(Key={"pk": f"{pk}#LAST_ATTEMPT"}).get("Item")
     return datetime.fromisoformat(item["attempted_at"]) if item else None
 
@@ -179,7 +183,7 @@ def _delete_tool_results_for_symbol(symbol: str) -> None:
     # scanning the whole table. Fine at this table's scale (one row per watchlist symbol per
     # tool, capped at 30 symbols) -- a GSI would be overkill for a purge that only runs on
     # removal, not on any hot path.
-    table = _dynamo_resource().Table("ToolResults")
+    table = _dynamo_resource().Table(_table_name("ToolResults"))
     prefix = f"{symbol}#"
     scan_kwargs = {
         "FilterExpression": boto3.dynamodb.conditions.Attr("pk").begins_with(prefix),
@@ -195,14 +199,14 @@ def _delete_tool_results_for_symbol(symbol: str) -> None:
             scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
 
 def _delete_agent_outputs_for_symbol(symbol: str) -> None:
-    table = _dynamo_resource().Table("AgentOutputs")
+    table = _dynamo_resource().Table(_table_name("AgentOutputs"))
     response = table.query(KeyConditionExpression=boto3.dynamodb.conditions.Key("symbol").eq(symbol))
     with table.batch_writer() as batch:
         for item in response["Items"]:
             batch.delete_item(Key={"symbol": item["symbol"], "agent_name": item["agent_name"]})
 
 def _delete_process_history_for_symbol(symbol: str) -> None:
-    table = _dynamo_resource().Table("ProcessHistory")
+    table = _dynamo_resource().Table(_table_name("ProcessHistory"))
     with table.batch_writer() as batch:
         for entry in query_process_history(symbol):
             batch.delete_item(Key={"symbol": entry["symbol"], "sk": entry["sk"]})
