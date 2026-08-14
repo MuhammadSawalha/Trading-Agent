@@ -12,6 +12,7 @@ type NewsEvent = {
 };
 
 const MAX_VISIBLE_ARTICLES = 20;
+const MAX_ARTICLE_AGE_MS = 23 * 60 * 60 * 1000;
 
 function timeAgo(publishedAt?: string): string {
   if (!publishedAt) return "";
@@ -22,6 +23,13 @@ function timeAgo(publishedAt?: string): string {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
+}
+
+// Articles without a published_at can't be confirmed as recent, so they're dropped along
+// with anything older than the cutoff rather than shown with an unknown age.
+function isRecent(publishedAt?: string): boolean {
+  if (!publishedAt) return false;
+  return Date.now() - new Date(publishedAt).getTime() <= MAX_ARTICLE_AGE_MS;
 }
 
 export function NewsFeed({ symbols }: { symbols?: string[] } = {}) {
@@ -40,6 +48,7 @@ export function NewsFeed({ symbols }: { symbols?: string[] } = {}) {
   // watchlist on every render is what actually drops it from view.
   const sorted = [...deduped.values()]
     .filter((e) => symbols === undefined || symbols.includes(e.symbol))
+    .filter((e) => isRecent(e.published_at))
     .sort((a, b) => (b.published_at ?? "").localeCompare(a.published_at ?? ""))
     .slice(0, MAX_VISIBLE_ARTICLES);
 
@@ -56,7 +65,18 @@ export function NewsFeed({ symbols }: { symbols?: string[] } = {}) {
               {e.published_at && <span className="news-time">{timeAgo(e.published_at)}</span>}
             </div>
             <div className="news-headline">
-              {e.title ?? "(untitled)"}
+              {e.url ? (
+                <a
+                  className="news-headline-link"
+                  href={e.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {e.title ?? "(untitled)"}
+                </a>
+              ) : (
+                e.title ?? "(untitled)"
+              )}
               {e.source && ` — ${e.source}`}
             </div>
           </div>
