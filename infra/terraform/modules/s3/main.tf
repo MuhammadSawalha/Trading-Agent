@@ -1,5 +1,5 @@
 resource "aws_s3_bucket" "tool_payloads" {
-  bucket = "stock-research-tool-payloads-${var.env}"
+  bucket = "stock-research-tool-payloads-${var.env}-228281126655"
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "expire_old_payloads" {
