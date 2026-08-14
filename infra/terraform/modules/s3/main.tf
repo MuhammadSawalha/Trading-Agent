@@ -7,8 +7,9 @@ resource "aws_s3_bucket_lifecycle_configuration" "expire_old_payloads" {
   rule {
     id     = "expire-after-30-days"
     status = "Enabled"
+    filter {}
     expiration {
-      days = 30  # payloads are re-fetched well before this per their own TTL; this is a backstop
+      days = 30 # payloads are re-fetched well before this per their own TTL; this is a backstop
     }
   }
 }

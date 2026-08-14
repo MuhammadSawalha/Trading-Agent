@@ -47,6 +47,10 @@ After these bootstrap steps, all subsequent Terraform deployments use the S3 bac
 
 - `modules/`: Reusable Terraform modules
   - `network/`: VPC, subnets, and routing configuration
+  - `iam/`: EC2 instance-profile role and app-access policy
+  - `dynamodb/`: ToolResults, AgentOutputs, and ProcessHistory tables
+  - `s3/`: Oversized tool-payload storage bucket
+  - `cluster/`: EC2 k3s bootstrap (control plane + ELB)
 - `envs/`: Environment-specific configurations
   - `dev/`: Development environment
   - `prod/`: Production environment

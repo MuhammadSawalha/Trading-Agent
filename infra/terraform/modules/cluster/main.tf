@@ -3,15 +3,15 @@ resource "aws_security_group" "cluster" {
   vpc_id = var.vpc_id
 
   ingress {
-    from_port = 22
-    to_port   = 22
-    protocol  = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]  # tighten to a known IP range before real deployment
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"] # tighten to a known IP range before real deployment
   }
   ingress {
-    from_port = 80
-    to_port   = 80
-    protocol  = "tcp"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
   ingress {
@@ -75,10 +75,10 @@ resource "aws_elb" "ingress" {
   subnets = var.subnet_ids
 
   listener {
-    instance_port     = 30080  # ingress-nginx's fixed NodePort, set at install time (Task 49)
+    instance_port     = 30080 # ingress-nginx's fixed NodePort, set at install time (Task 49)
     instance_protocol = "http"
-    lb_port            = 80
-    lb_protocol         = "http"
+    lb_port           = 80
+    lb_protocol       = "http"
   }
 
   health_check {
@@ -89,7 +89,7 @@ resource "aws_elb" "ingress" {
     unhealthy_threshold = 3
   }
 
-  instances                  = aws_instance.worker[*].id
-  cross_zone_load_balancing  = true
-  security_groups            = [aws_security_group.cluster.id]
+  instances                 = aws_instance.worker[*].id
+  cross_zone_load_balancing = true
+  security_groups           = [aws_security_group.cluster.id]
 }

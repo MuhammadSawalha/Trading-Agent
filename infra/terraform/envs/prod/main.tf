@@ -26,12 +26,12 @@ variable "cluster_token" {
 }
 
 module "cluster" {
-  source                 = "../../modules/cluster"
-  env                     = "prod"
-  vpc_id                  = module.network.vpc_id
-  subnet_ids              = module.network.public_subnet_ids
-  instance_profile_name   = module.iam.instance_profile_name
-  cluster_token           = var.cluster_token
+  source                = "../../modules/cluster"
+  env                   = "prod"
+  vpc_id                = module.network.vpc_id
+  subnet_ids            = module.network.public_subnet_ids
+  instance_profile_name = module.iam.instance_profile_name
+  cluster_token         = var.cluster_token
 }
 
 output "control_plane_public_ip" {
@@ -40,4 +40,8 @@ output "control_plane_public_ip" {
 
 output "elb_dns_name" {
   value = module.cluster.elb_dns_name
+}
+
+output "dynamodb_table_suffix" {
+  value = "-prod"
 }

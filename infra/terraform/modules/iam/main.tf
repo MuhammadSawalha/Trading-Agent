@@ -25,7 +25,7 @@ resource "aws_iam_role_policy" "app_access" {
       {
         Sid      = "DynamoDBAccess"
         Effect   = "Allow"
-        Action   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query", "dynamodb:UpdateItem", "dynamodb:DeleteItem"]
+        Action   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query", "dynamodb:UpdateItem", "dynamodb:DeleteItem", "dynamodb:Scan", "dynamodb:BatchWriteItem"]
         Resource = var.dynamodb_table_arns
       },
       {
