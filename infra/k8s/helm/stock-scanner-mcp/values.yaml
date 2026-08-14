@@ -1,0 +1,10 @@
+image: "<ECR_REPO>/stock-scanner-mcp"
+tag: "latest"
+replicas: 2
+resources:
+  requests: { cpu: "100m", memory: "256Mi" }
+  limits: { cpu: "500m", memory: "512Mi" }
+hpa:
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilization: 70
