@@ -61,15 +61,32 @@ resource "aws_iam_role" "ci" {
   name = "stock-research-ci"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect    = "Allow"
-      Action    = "sts:AssumeRoleWithWebIdentity"
-      Principal = { Federated = data.aws_iam_openid_connect_provider.github_actions.arn }
-      Condition = {
-        StringEquals = { "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com" }
-        StringLike   = { "token.actions.githubusercontent.com:sub" = "repo:${var.github_repo}:*" }
-      }
-    }]
+    Statement = [
+      {
+        Effect    = "Allow"
+        Action    = "sts:AssumeRoleWithWebIdentity"
+        Principal = { Federated = data.aws_iam_openid_connect_provider.github_actions.arn }
+        Condition = {
+          StringEquals = { "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com" }
+          StringLike   = { "token.actions.githubusercontent.com:sub" = "repo:${var.github_repo}:*" }
+        }
+      },
+      {
+        # aws-actions/configure-aws-credentials tags the assumed session by default (actor,
+        # repository, workflow, etc.) -- STS treats that as part of the same
+        # AssumeRoleWithWebIdentity call, so without a matching sts:TagSession grant here the
+        # whole call is rejected with a generic "Not authorized to perform
+        # sts:AssumeRoleWithWebIdentity", even though the AssumeRoleWithWebIdentity statement
+        # above is itself correct.
+        Effect    = "Allow"
+        Action    = "sts:TagSession"
+        Principal = { Federated = data.aws_iam_openid_connect_provider.github_actions.arn }
+        Condition = {
+          StringEquals = { "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com" }
+          StringLike   = { "token.actions.githubusercontent.com:sub" = "repo:${var.github_repo}:*" }
+        }
+      },
+    ]
   })
 }
 
