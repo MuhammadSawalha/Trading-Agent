@@ -1,10 +1,17 @@
 # .github/workflows/deploy-dev.yml
 name: Deploy to dev
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - 'infra/k8s/helm/*/values-prod.yaml'
+  # TEMPORARILY DISABLED: dev infra (Terraform state/DynamoDB/cluster, ECR
+  # repos, CI IAM role) has not been provisioned in AWS yet, so every run
+  # fails at the credentials step. Re-enable the `push` trigger below once
+  # infra/terraform/envs/dev has been applied and the AWS_CI_ROLE_ARN /
+  # KUBECONFIG_DEV secrets and DEV_HOST variable are configured. Until then,
+  # this only runs on manual dispatch.
+  # push:
+  #   branches: [main]
+  #   paths-ignore:
+  #     - 'infra/k8s/helm/*/values-prod.yaml'
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -14,6 +21,7 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         service: [mcp-server, scheduler, api-backend, frontend, stock-scanner-mcp, tradingview-mcp]
     steps:
