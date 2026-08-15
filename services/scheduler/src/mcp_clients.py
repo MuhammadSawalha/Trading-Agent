@@ -69,7 +69,15 @@ async def call_tool(client: MultiServerMCPClient, server: str, tool_name: str, *
         _publish_circuit_breaker_state()  # allow_call() can flip open -> half_open
         if not allowed:
             raise CircuitOpenError(f"circuit open for shared TradingView dependency (server={server})")
-    try:
+
+    async def _do_call() -> dict:
+        # get_tools() is inside the timeout, not just ainvoke(): it opens a fresh MCP session
+        # (SSE handshake + a tools/list round-trip) against the upstream server, and per the
+        # note on _TOOL_CALL_TIMEOUT_SECONDS above the session-level JSON-RPC read timeout is
+        # never configured -- so a wedged tradingview/stock_scanner proxy hangs HERE at least
+        # as readily as it does in the invoke, and an unbounded hang would block the
+        # single-replica scheduler's tick forever while staying invisible to the
+        # ToolCallTimeouts alert.
         tools = await client.get_tools(server_name=server)
         tool = next(t for t in tools if t.name == tool_name)
         # Invoke via the ToolCall input shape rather than a plain dict: langchain_mcp_adapters
@@ -77,13 +85,13 @@ async def call_tool(client: MultiServerMCPClient, server: str, tool_name: str, *
         # _format_output only wraps the result in a ToolMessage (preserving `artifact`, where
         # the MCP structuredContent lives) when tool_call_id is not None. Passing a plain dict
         # leaves tool_call_id None and silently discards the artifact.
-        message = await asyncio.wait_for(
-            tool.ainvoke(
-                {"type": "tool_call", "name": tool_name, "args": kwargs, "id": str(uuid.uuid4())}
-            ),
-            timeout=_TOOL_CALL_TIMEOUT_SECONDS,
+        message = await tool.ainvoke(
+            {"type": "tool_call", "name": tool_name, "args": kwargs, "id": str(uuid.uuid4())}
         )
-        result = _extract_structured_result(message)
+        return _extract_structured_result(message)
+
+    try:
+        result = await asyncio.wait_for(_do_call(), timeout=_TOOL_CALL_TIMEOUT_SECONDS)
     except asyncio.TimeoutError:
         MCP_TOOL_CALL_TIMEOUTS.inc()
         if protected:

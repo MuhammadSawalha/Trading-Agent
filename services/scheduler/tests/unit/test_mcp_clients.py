@@ -96,6 +96,33 @@ async def test_timeout_increments_counter_and_trips_breaker_via_call_tool(monkey
     assert mcp_clients.CIRCUIT_BREAKER_STATE.labels(server="tradingview")._value.get() == 1
     assert mcp_clients.CIRCUIT_BREAKER_STATE.labels(server="stock_scanner")._value.get() == 1
 
+async def test_timeout_covers_get_tools_not_just_ainvoke(monkeypatch):
+    # The timeout must wrap the WHOLE call sequence, not only tool.ainvoke: get_tools()
+    # opens a fresh MCP session (SSE handshake + tools/list) with no session-level read
+    # timeout configured, so a wedged tradingview/stock_scanner proxy hangs there first --
+    # the same failure mode test_get_tools_failure_trips_breaker_for_protected_server
+    # covers for a hard ConnectionError, but hanging instead of erroring.
+    fresh_breaker = CircuitBreaker(failure_threshold=1, cooldown_seconds=300)
+    monkeypatch.setattr(mcp_clients, "_tradingview_breaker", fresh_breaker)
+    monkeypatch.setattr(mcp_clients, "_TOOL_CALL_TIMEOUT_SECONDS", 0.01)
+
+    class HangingServerClient:
+        async def get_tools(self, *, server_name):
+            await asyncio.sleep(10)
+            return []  # pragma: no cover
+
+    before = mcp_clients.MCP_TOOL_CALL_TIMEOUTS._value.get()
+
+    with pytest.raises(asyncio.TimeoutError):
+        await call_tool(HangingServerClient(), "tradingview", "some_tool")
+
+    # Counted as a timeout (feeding the ToolCallTimeouts alert) and trips the breaker,
+    # exactly as a hang inside ainvoke does.
+    assert mcp_clients.MCP_TOOL_CALL_TIMEOUTS._value.get() == before + 1
+    assert fresh_breaker.state == "open"
+    assert mcp_clients.CIRCUIT_BREAKER_STATE.labels(server="tradingview")._value.get() == 1
+    assert mcp_clients.CIRCUIT_BREAKER_STATE.labels(server="stock_scanner")._value.get() == 1
+
 async def test_non_timeout_exception_does_not_increment_timeout_counter(monkeypatch):
     # A schema error, network error, etc. must trip the breaker (existing behavior,
     # unchanged) WITHOUT being miscounted as a timeout.

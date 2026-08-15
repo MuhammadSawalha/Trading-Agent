@@ -21,7 +21,16 @@ spec:
     - name: stock-research
       rules:
         - alert: HighErrorRate
-          expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.05
+          # PromQL binary operators only match samples whose label sets are identical, so a
+          # bare `rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m])`
+          # can only ever pair a 5xx series with ITSELF -- yielding exactly 1 for any handler
+          # with 5xx traffic, i.e. "any 5xx at all", not a 5% error rate. Summing away `status`
+          # (and every other per-request label) on both sides and grouping by `app` makes this
+          # a real per-service ratio. `app` exists on these samples because the ServiceMonitor
+          # in monitoring/prometheus/servicemonitors.yaml copies it over via targetLabels.
+          expr: |
+            sum by (app) (rate(http_requests_total{status=~"5.."}[5m]))
+              / sum by (app) (rate(http_requests_total[5m])) > 0.05
           for: 5m
           labels: { severity: warning }
           annotations: { summary: "5xx rate above 5% for {{ $labels.app }}" }

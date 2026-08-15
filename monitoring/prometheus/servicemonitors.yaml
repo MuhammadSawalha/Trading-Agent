@@ -14,6 +14,15 @@ metadata:
   name: stock-research-services
   namespace: monitoring
 spec:
+  # prometheus-operator only attaches its own discovery labels (namespace/service/pod/
+  # container/endpoint/job) to scraped samples by default -- the selected Service's OWN
+  # metadata.labels are dropped unless named here. `targetLabels` is a top-level spec
+  # field (not per-endpoint) and copies Service.metadata.labels.app onto every sample as
+  # an `app` Prometheus label. Without it the alert annotations in
+  # monitoring/prometheus/rules/alerts.yaml render `{{ $labels.app }}` empty, and both
+  # those rules' and the Grafana dashboard's `by (app)` aggregations collapse to a
+  # single unlabelled series.
+  targetLabels: [app]
   namespaceSelector:
     matchNames: [dev, prod]
   selector:
