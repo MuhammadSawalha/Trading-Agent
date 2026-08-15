@@ -1,0 +1,10 @@
+{
+  "title": "Stock Research Agent — System Health",
+  "panels": [
+    { "title": "Request latency (p50/p95) by service", "targets": [{ "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))" }] },
+    { "title": "5xx error rate by service", "targets": [{ "expr": "rate(http_requests_total{status=~\"5..\"}[5m])" }] },
+    { "title": "Circuit breaker state (0=closed,1=open,2=half_open)", "targets": [{ "expr": "circuit_breaker_state" }] },
+    { "title": "Scheduler heartbeat age (seconds)", "targets": [{ "expr": "time() - scheduler_last_tick_timestamp_seconds" }] },
+    { "title": "Pod restarts (last 1h)", "targets": [{ "expr": "increase(kube_pod_container_status_restarts_total{namespace=~\"dev|prod\"}[1h])" }] }
+  ]
+}
