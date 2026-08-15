@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-server
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels: { app: mcp-server }
+  template:
+    metadata:
+      labels: { app: mcp-server }
+    spec:
+      containers:
+        - name: mcp-server
+          image: "{{ .Values.image }}:{{ .Values.tag }}"
+          ports: [{ containerPort: 8001 }]
+          envFrom:
+            - configMapRef: { name: mcp-server-config }
+            - secretRef: { name: mcp-server-secrets }
+          resources: {{ toYaml .Values.resources | nindent 12 }}
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8001 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8001 }
+            initialDelaySeconds: 5
+            periodSeconds: 5

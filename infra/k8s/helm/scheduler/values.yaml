@@ -1,0 +1,8 @@
+image: "<ECR_REPO>/scheduler"
+tag: "latest"
+dynamodbTableSuffix: ""
+tradingviewMcpUrl: "http://tradingview-mcp:8080/sse"
+stockScannerMcpUrl: "http://stock-scanner-mcp:8080/sse"
+resources:
+  requests: { cpu: "200m", memory: "512Mi" }
+  limits: { cpu: "1000m", memory: "1Gi" }
