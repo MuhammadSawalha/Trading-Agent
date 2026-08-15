@@ -10,3 +10,5 @@ build/
 .terraform/
 *.tfstate*
 .superpowers/
+*.tfplan
+tfplan

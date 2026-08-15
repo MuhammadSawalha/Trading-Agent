@@ -55,6 +55,12 @@ def create_app() -> FastMCP:
     async def metrics(_request: Request) -> Response:
         return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
+    # infra/k8s/helm/mcp-server's liveness/readiness probes hit GET /healthz on this same
+    # port; without this route they 404 and Kubernetes kills the container in a crash loop.
+    @app.custom_route("/healthz", methods=["GET"])
+    async def healthz(_request: Request) -> Response:
+        return Response(status_code=200)
+
     return app
 
 

@@ -1,0 +1,53 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ecr-cred-refresher
+spec:
+  # ECR login tokens are valid for 12h; refreshing at 1/2 that interval leaves a full cycle of
+  # margin against a missed or delayed run before any pull would start failing.
+  schedule: "0 */6 * * *"
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          serviceAccountName: ecr-cred-refresher
+          restartPolicy: Never
+          containers:
+            - name: refresh
+              image: amazon/aws-cli:2.17.62
+              # No kubectl in this image (and no need to install one): the in-cluster
+              # ServiceAccount token + CA cert already let curl talk to the API server
+              # directly, which is all a single secret create/patch needs.
+              command: ["sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  NS=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
+                  TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+                  CACERT=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+                  REGISTRY=228281126655.dkr.ecr.us-east-1.amazonaws.com
+                  PASS=$(aws ecr get-login-password --region us-east-1)
+                  AUTH=$(printf '%s:%s' AWS "$PASS" | base64 -w0)
+                  DOCKERCFG=$(printf '{"auths":{"%s":{"username":"AWS","password":"%s","auth":"%s"}}}' "$REGISTRY" "$PASS" "$AUTH" | base64 -w0)
+                  API="https://kubernetes.default.svc/api/v1/namespaces/$NS/secrets"
+                  BODY=$(printf '{"data":{".dockerconfigjson":"%s"}}' "$DOCKERCFG")
+                  STATUS=$(curl -sk -o /tmp/resp -w '%{http_code}' -X PATCH "$API/ecr-cred" \
+                    -H "Authorization: Bearer $TOKEN" \
+                    -H "Content-Type: application/strategic-merge-patch+json" \
+                    --cacert "$CACERT" \
+                    -d "$BODY")
+                  echo "PATCH status: $STATUS"
+                  if [ "$STATUS" = "404" ]; then
+                    echo "secret missing, creating"
+                    CREATE_BODY=$(printf '{"apiVersion":"v1","kind":"Secret","metadata":{"name":"ecr-cred"},"type":"kubernetes.io/dockerconfigjson","data":{".dockerconfigjson":"%s"}}' "$DOCKERCFG")
+                    curl -sk -o /tmp/resp2 -w '%{http_code}\n' -X POST "$API" \
+                      -H "Authorization: Bearer $TOKEN" \
+                      -H "Content-Type: application/json" \
+                      --cacert "$CACERT" \
+                      -d "$CREATE_BODY"
+                    cat /tmp/resp2
+                  elif [ "$STATUS" != "200" ]; then
+                    cat /tmp/resp
+                    exit 1
+                  fi

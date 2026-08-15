@@ -1,16 +1,15 @@
 # .github/workflows/deploy-dev.yml
 name: Deploy to dev
 on:
-  # TEMPORARILY DISABLED: dev infra (Terraform state/DynamoDB/cluster, ECR
-  # repos, CI IAM role) has not been provisioned in AWS yet, so every run
-  # fails at the credentials step. Re-enable the `push` trigger below once
-  # infra/terraform/envs/dev has been applied and the AWS_CI_ROLE_ARN /
-  # KUBECONFIG_DEV secrets and DEV_HOST variable are configured. Until then,
-  # this only runs on manual dispatch.
-  # push:
-  #   branches: [main]
-  #   paths-ignore:
-  #     - 'infra/k8s/helm/*/values-prod.yaml'
+  # dev infra (Terraform state/DynamoDB/cluster, ECR repos, CI IAM role) is provisioned --
+  # infra/terraform/envs/{shared,dev} have been applied. This still needs the
+  # AWS_CI_ROLE_ARN / KUBECONFIG_DEV repo secrets and DEV_HOST repo variable set in GitHub
+  # (Settings > Secrets and variables > Actions) before a push-triggered run can succeed --
+  # see the values this Terraform state produced in the PR/commit that enabled this trigger.
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'infra/k8s/helm/*/values-prod.yaml'
   workflow_dispatch: {}
 
 permissions:
@@ -39,7 +38,7 @@ jobs:
         if: matrix.service != 'frontend'
       - name: Build and push frontend
         run: |
-          docker build -f frontend/Dockerfile -t ${{ steps.ecr.outputs.registry }}/frontend:${{ github.sha }} .
+          docker build -f frontend/Dockerfile -t ${{ steps.ecr.outputs.registry }}/frontend:${{ github.sha }} frontend
           docker push ${{ steps.ecr.outputs.registry }}/frontend:${{ github.sha }}
         if: matrix.service == 'frontend'
 
