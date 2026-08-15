@@ -7,6 +7,9 @@ on:
         description: "Image tag (git SHA) to promote — must already be deployed and verified in dev"
         required: true
 
+permissions:
+  contents: write
+
 jobs:
   promote:
     runs-on: ubuntu-latest
@@ -19,12 +22,25 @@ jobs:
             sed -i "s/^tag: .*/tag: \"${{ inputs.image_tag }}\"/" "infra/k8s/helm/$chart/values-prod.yaml"
           done
       - name: Commit the tag bump
+        id: commit
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
           git add infra/k8s/helm/*/values-prod.yaml
-          git commit -m "chore: promote ${{ inputs.image_tag }} to prod"
-          git push
+          if git diff --staged --quiet; then
+            echo "No changes, tag already promoted"
+            echo "committed=false" >> "$GITHUB_OUTPUT"
+          else
+            git commit -m "chore: promote ${{ inputs.image_tag }} to prod"
+            echo "committed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Push the tag bump
+        if: steps.commit.outputs.committed == 'true'
+        run: git push
+      - name: Install argocd CLI
+        run: |
+          curl -sSL -o /usr/local/bin/argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+          chmod +x /usr/local/bin/argocd
       - name: Trigger ArgoCD sync
         run: |
           argocd app sync mcp-server-prod scheduler-prod api-backend-prod frontend-prod stock-scanner-mcp-prod tradingview-mcp-prod \

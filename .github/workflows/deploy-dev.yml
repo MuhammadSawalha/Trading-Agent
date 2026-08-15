@@ -3,6 +3,12 @@ name: Deploy to dev
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'infra/k8s/helm/*/values-prod.yaml'
+
+permissions:
+  contents: read
+  id-token: write
 
 jobs:
   build-and-push:
@@ -35,16 +41,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_CI_ROLE_ARN }}
+          aws-region: us-east-1
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
       - name: Configure kubeconfig
-        run: echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > $HOME/.kube/config
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > $HOME/.kube/config
       - name: Deploy each chart
         run: |
           for chart in mcp-server scheduler api-backend frontend stock-scanner-mcp tradingview-mcp; do
             helm upgrade --install "$chart" "infra/k8s/helm/$chart" \
-              -n dev -f "infra/k8s/helm/$chart/values-dev.yaml" \
-              --set tag=${{ github.sha }} --wait --timeout 5m
+              -n dev --create-namespace -f "infra/k8s/helm/$chart/values-dev.yaml" \
+              --set image=${{ steps.ecr.outputs.registry }}/$chart --set tag=${{ github.sha }} --wait --timeout 5m
           done
       - name: Run smoke test against dev
         run: |
           chmod +x scripts/smoke_test.sh
-          DEV_HOST=dev.stock-research.example ./scripts/smoke_test.sh
+          DEV_HOST=${{ vars.DEV_HOST }} ./scripts/smoke_test.sh

@@ -6,7 +6,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: <THIS_REPO_URL>
+    repoURL: https://github.com/MuhammadSawalha/Trading-Agent.git
     targetRevision: main
     path: infra/k8s/helm/frontend
     helm:
