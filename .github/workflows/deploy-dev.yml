@@ -60,10 +60,45 @@ jobs:
           echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > $HOME/.kube/config
       - name: Deploy each chart
         run: |
+          # Matches infra/terraform/modules/s3's stock-research-tool-payloads-${env}-<account-id>
+          # naming convention. Not a secret -- the account ID is already public in every ECR/DynamoDB
+          # ARN this workflow touches -- so it's inlined here rather than needing its own repo variable.
+          TOOL_PAYLOADS_BUCKET="stock-research-tool-payloads-dev-228281126655"
           for chart in mcp-server scheduler api-backend frontend stock-scanner-mcp tradingview-mcp; do
+            # Each Helm chart's templates/secret.yaml (mcp-server, scheduler, api-backend) defines the
+            # SHAPE of these secrets but not the key material -- these --set flags are what actually
+            # populate them from GitHub Actions secrets. Without this, every deploy silently ships with
+            # empty provider API keys: no /healthz-visible failure, but every tool call against
+            # Finnhub/FMP/FRED/Marketaux 401s.
+            EXTRA_SET=()
+            case "$chart" in
+              mcp-server)
+                EXTRA_SET=(
+                  --set finnhubApiKey="${{ secrets.FINNHUB_API_KEY }}"
+                  --set fmpApiKey="${{ secrets.FMP_API_KEY }}"
+                  --set fredApiKey="${{ secrets.FRED_API_KEY }}"
+                  --set marketauxApiKey="${{ secrets.MARKETAUX_API_KEY }}"
+                  --set toolPayloadsBucket="$TOOL_PAYLOADS_BUCKET"
+                )
+                ;;
+              scheduler)
+                EXTRA_SET=(
+                  --set toolPayloadsBucket="$TOOL_PAYLOADS_BUCKET"
+                  --set langfusePublicKey="${{ secrets.LANGFUSE_PUBLIC_KEY }}"
+                  --set langfuseSecretKey="${{ secrets.LANGFUSE_SECRET_KEY }}"
+                )
+                ;;
+              api-backend)
+                EXTRA_SET=(
+                  --set langfusePublicKey="${{ secrets.LANGFUSE_PUBLIC_KEY }}"
+                  --set langfuseSecretKey="${{ secrets.LANGFUSE_SECRET_KEY }}"
+                )
+                ;;
+            esac
             helm upgrade --install "$chart" "infra/k8s/helm/$chart" \
               -n dev --create-namespace -f "infra/k8s/helm/$chart/values-dev.yaml" \
-              --set image=${{ steps.ecr.outputs.registry }}/$chart --set tag=${{ github.sha }} --wait --timeout 5m
+              --set image=${{ steps.ecr.outputs.registry }}/$chart --set tag=${{ github.sha }} \
+              "${EXTRA_SET[@]}" --wait --timeout 5m
           done
       - name: Run smoke test against dev
         run: |
