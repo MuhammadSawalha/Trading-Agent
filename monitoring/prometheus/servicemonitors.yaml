@@ -1,0 +1,24 @@
+# ServiceMonitor for the three scrapable Stock Research Agent workloads (frontend is
+# static and out of scope -- see infra/k8s/helm/{mcp-server,api-backend,scheduler}).
+#
+# Matches Services (not Pods -- see each chart's service.yaml `metadata.labels`) by an
+# `app` label in {mcp-server, api-backend, scheduler}, across the `dev` and `prod`
+# namespaces those charts are deployed into, and scrapes the named `metrics` port each
+# Service now exposes.
+#
+# Apply with:
+#   kubectl apply -f monitoring/prometheus/servicemonitors.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: stock-research-services
+  namespace: monitoring
+spec:
+  namespaceSelector:
+    matchNames: [dev, prod]
+  selector:
+    matchExpressions:
+      - { key: app, operator: In, values: [mcp-server, api-backend, scheduler] }
+  endpoints:
+    - port: metrics
+      interval: 30s

@@ -10,6 +10,7 @@ dependencies = [
     "langchain-mcp-adapters>=0.1.0",
     "langchain-aws>=0.2.0",
     "langgraph>=0.2.0",
+    "prometheus-client>=0.20.0",
     "common @ file:../../packages/common",
 ]
 

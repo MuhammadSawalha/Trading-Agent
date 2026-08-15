@@ -13,7 +13,7 @@ spec:
       containers:
         - name: mcp-server
           image: "{{ .Values.image }}:{{ .Values.tag }}"
-          ports: [{ containerPort: 8001 }]
+          ports: [{ name: metrics, containerPort: 8001 }]
           envFrom:
             - configMapRef: { name: mcp-server-config }
             - secretRef: { name: mcp-server-secrets }

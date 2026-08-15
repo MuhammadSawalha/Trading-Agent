@@ -2,6 +2,7 @@ import asyncio
 import threading
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from .heartbeat import is_healthy
 from .loop import run_forever
 from .mcp_clients import build_mcp_client
@@ -17,12 +18,29 @@ class HealthHandler(BaseHTTPRequestHandler):
     timeout = 5
 
     def do_GET(self):
-        if self.path != "/healthz":
-            self.send_response(404)
+        if self.path == "/healthz":
+            healthy = is_healthy(datetime.now(timezone.utc), _MAX_STALENESS_SECONDS)
+            self.send_response(200 if healthy else 503)
             self.end_headers()
             return
-        healthy = is_healthy(datetime.now(timezone.utc), _MAX_STALENESS_SECONDS)
-        self.send_response(200 if healthy else 503)
+        if self.path == "/metrics":
+            # The scheduler runs no FastAPI/ASGI app -- this health server is plain
+            # http.server -- so prometheus-fastapi-instrumentator (used for api-backend)
+            # doesn't apply here. Same server, same pattern as /healthz above: a second
+            # route on this handler that returns prometheus_client's default-registry
+            # exposition payload. That default registry's auto-registered
+            # ProcessCollector/PlatformCollector/GCCollector are enough for a valid,
+            # non-empty /metrics response; scheduler-specific counters (tick duration,
+            # tools fetched, cascades triggered) are wired into this registry by a later
+            # task, not here.
+            payload = generate_latest()
+            self.send_response(200)
+            self.send_header("Content-Type", CONTENT_TYPE_LATEST)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+        self.send_response(404)
         self.end_headers()
 
     def log_message(self, format, *args):
