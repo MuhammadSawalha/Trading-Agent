@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from .state import GraphState, Claim
 from .specialists import ClaimModel
 from common.dynamo import write_agent_output, append_process_history
+from common.tracing import langfuse_config
 
 # Instructs Bull/Bear to carry the scoring-relevant provenance fields through from the
 # source specialist claim; without it the model reconstructs claims from scratch and these
@@ -50,41 +51,53 @@ def _all_specialist_claims(state: GraphState) -> list[Claim]:
         claims.extend(state.get(specialist, {}).get("claims", []))
     return claims
 
-def _invoke_bull_llm(claims: list[Claim]) -> list[dict]:
+def _invoke_bull_llm(claims: list[Claim], symbol: str) -> list[dict]:
     llm = _bedrock_llm().with_structured_output(ClaimListResponse)
-    response = llm.invoke([
-        {"role": "system", "content": (
-            "Construct the strongest bullish case from these specialist claims. Only use "
-            "claims that support a bullish view." + _CARRY_THROUGH_INSTRUCTION
-            + _ANCHORING_RESISTANCE_INSTRUCTION
-        )},
-        {"role": "user", "content": f"Claims:\n{claims}"},
-    ])
+    system_prompt = (
+        "Construct the strongest bullish case from these specialist claims. Only use "
+        "claims that support a bullish view." + _CARRY_THROUGH_INSTRUCTION
+        + _ANCHORING_RESISTANCE_INSTRUCTION
+    )
+    response = llm.invoke(
+        [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Claims:\n{claims}"},
+        ],
+        config=langfuse_config(session_id=symbol, tags=[system_prompt[:20]]),
+    )
     return [c.model_dump() for c in response.claims]
 
-def _invoke_bear_llm(claims: list[Claim]) -> list[dict]:
+def _invoke_bear_llm(claims: list[Claim], symbol: str) -> list[dict]:
     llm = _bedrock_llm().with_structured_output(ClaimListResponse)
-    response = llm.invoke([
-        {"role": "system", "content": (
-            "Construct the strongest bearish case from these specialist claims. Only use "
-            "claims that support a bearish view." + _CARRY_THROUGH_INSTRUCTION
-            + _ANCHORING_RESISTANCE_INSTRUCTION
-        )},
-        {"role": "user", "content": f"Claims:\n{claims}"},
-    ])
+    system_prompt = (
+        "Construct the strongest bearish case from these specialist claims. Only use "
+        "claims that support a bearish view." + _CARRY_THROUGH_INSTRUCTION
+        + _ANCHORING_RESISTANCE_INSTRUCTION
+    )
+    response = llm.invoke(
+        [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Claims:\n{claims}"},
+        ],
+        config=langfuse_config(session_id=symbol, tags=[system_prompt[:20]]),
+    )
     return [c.model_dump() for c in response.claims]
 
-def _invoke_bear_rebuttal_llm(bull_claims: list[Claim], bear_claims: list[dict]) -> dict:
+def _invoke_bear_rebuttal_llm(bull_claims: list[Claim], bear_claims: list[dict], symbol: str) -> dict:
     llm = _bedrock_llm().with_structured_output(RebuttalResponse)
-    response = llm.invoke([
-        {"role": "system", "content": (
-            "You are arguing the bear case. For each of the Bull's claims below, either "
-            "directly rebut it with evidence from your own claims, or concede it. Then, as "
-            "a separate judgment, decide which of your rebuttal attempts actually succeeded "
-            "(the Bull's claim is meaningfully undermined) vs. which were weak or unconvincing."
-        )},
-        {"role": "user", "content": f"Bull claims:\n{bull_claims}\n\nYour bear claims:\n{bear_claims}"},
-    ])
+    system_prompt = (
+        "You are arguing the bear case. For each of the Bull's claims below, either "
+        "directly rebut it with evidence from your own claims, or concede it. Then, as "
+        "a separate judgment, decide which of your rebuttal attempts actually succeeded "
+        "(the Bull's claim is meaningfully undermined) vs. which were weak or unconvincing."
+    )
+    response = llm.invoke(
+        [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Bull claims:\n{bull_claims}\n\nYour bear claims:\n{bear_claims}"},
+        ],
+        config=langfuse_config(session_id=symbol, tags=[system_prompt[:20]]),
+    )
     return response.model_dump()
 
 def bull_node(state: GraphState) -> dict:
@@ -93,7 +106,7 @@ def bull_node(state: GraphState) -> dict:
 
     append_process_history(symbol, "Bull", reason="pipeline_run", status="started", timestamp=datetime.now(timezone.utc))
     try:
-        bull_claims = _invoke_bull_llm(claims)
+        bull_claims = _invoke_bull_llm(claims, symbol)
         # rebutted_undefended is decided solely by the Bear's rebuttal-judgment step; never
         # let the claim-construction call invent it.
         for claim in bull_claims:
@@ -111,13 +124,13 @@ def bear_node(state: GraphState) -> dict:
 
     append_process_history(symbol, "Bear", reason="pipeline_run", status="started", timestamp=datetime.now(timezone.utc))
     try:
-        bear_claims = _invoke_bear_llm(claims)
+        bear_claims = _invoke_bear_llm(claims, symbol)
         # The rebuttal step never touches the Bear's own claims, so this flag can only ever
         # be a hallucination on them.
         for claim in bear_claims:
             claim["rebutted_undefended"] = False
 
-        rebuttal = _invoke_bear_rebuttal_llm(state.get("bull_claims", []), bear_claims)
+        rebuttal = _invoke_bear_rebuttal_llm(state.get("bull_claims", []), bear_claims, symbol)
 
         bull_claims = [dict(c) for c in state.get("bull_claims", [])]
         for idx in rebuttal["succeeded_indices"]:

@@ -1,5 +1,7 @@
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 import pytest
+from langfuse.langchain import CallbackHandler
+from src.graph import risk as risk_mod
 from src.graph.risk import risk_node
 
 @pytest.fixture
@@ -52,3 +54,20 @@ def test_marks_failed_on_llm_exception(mock_invoke, persisted):
     outputs, history = persisted
     assert outputs == {}
     assert history == [("Risk", "started"), ("Risk", "failed")]
+
+@patch("src.graph.risk.ChatBedrockConverse")
+def test_invoke_risk_llm_wires_langfuse_config_into_invoke_call(mock_chat_cls):
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value = MagicMock(
+        model_dump=lambda: {"risk_level": "low", "does_not_take_a_directional_stance": True, "rationale": "r"}
+    )
+    mock_chat_cls.return_value.with_structured_output.return_value = mock_llm
+    state = {"symbol": "AAPL", "bull_claims": [], "bear_claims": []}
+
+    risk_mod._invoke_risk_llm(state)
+
+    _, kwargs = mock_llm.invoke.call_args
+    config = kwargs["config"]
+    assert config["metadata"] == {"langfuse_session_id": "AAPL"}
+    assert len(config["callbacks"]) == 1
+    assert isinstance(config["callbacks"][0], CallbackHandler)

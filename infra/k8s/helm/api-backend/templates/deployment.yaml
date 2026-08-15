@@ -16,6 +16,7 @@ spec:
           ports: [{ name: metrics, containerPort: 8080 }]
           envFrom:
             - configMapRef: { name: api-backend-config }
+            - secretRef: { name: api-backend-secrets }
           resources: {{ toYaml .Values.resources | nindent 12 }}
           livenessProbe:
             httpGet: { path: /healthz, port: 8080 }

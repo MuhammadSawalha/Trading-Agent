@@ -4,6 +4,7 @@ from langchain_aws import ChatBedrockConverse
 from pydantic import BaseModel
 from .state import GraphState
 from common.dynamo import write_agent_output, append_process_history
+from common.tracing import langfuse_config
 
 class RiskResponse(BaseModel):
     # Constrained rather than a bare str: the MCP scoring tool does a bare
@@ -19,27 +20,31 @@ def _invoke_risk_llm(state: GraphState) -> dict:
         region_name="us-east-1",
     ).with_structured_output(RiskResponse)
     all_claims = state.get("bull_claims", []) + state.get("bear_claims", [])
-    response = llm.invoke([
-        {"role": "system", "content": (
-            "You are the Risk agent. Synthesize market risk (volatility, macro backdrop, "
-            "liquidity, options-implied risk, upcoming events, ownership instability) and "
-            "data-reliability risk (cross-source disagreement, unreliable-data flags) into "
-            "a single risk_level of low/medium/high. You must NEVER argue a bullish or "
-            "bearish direction — set does_not_take_a_directional_stance to true only if "
-            "your rationale contains no directional language.\n\n"
-            "Directional language includes praising or criticizing the company's quality, "
-            "fundamentals, or valuation — e.g. 'strong margins', 'exceptional ROE', "
-            "'overvalued', 'fortress balance sheet', 'attractive entry point'. Never restate "
-            "a claim's bullish or bearish framing, even while calling it a risk input. "
-            "Instead, name only the risk itself and its magnitude/uncertainty — e.g. write "
-            "'valuation multiples imply high sensitivity to a growth deceleration' rather "
-            "than 'valuation is stretched/overvalued'; write 'earnings depend heavily on a "
-            "narrow set of margin and growth metrics' rather than 'fundamentals are strong "
-            "but priced in'. If you catch yourself characterizing whether the company is "
-            "doing well or poorly, rewrite the sentence before responding."
-        )},
-        {"role": "user", "content": f"Claims under consideration:\n{all_claims}"},
-    ])
+    system_prompt = (
+        "You are the Risk agent. Synthesize market risk (volatility, macro backdrop, "
+        "liquidity, options-implied risk, upcoming events, ownership instability) and "
+        "data-reliability risk (cross-source disagreement, unreliable-data flags) into "
+        "a single risk_level of low/medium/high. You must NEVER argue a bullish or "
+        "bearish direction — set does_not_take_a_directional_stance to true only if "
+        "your rationale contains no directional language.\n\n"
+        "Directional language includes praising or criticizing the company's quality, "
+        "fundamentals, or valuation — e.g. 'strong margins', 'exceptional ROE', "
+        "'overvalued', 'fortress balance sheet', 'attractive entry point'. Never restate "
+        "a claim's bullish or bearish framing, even while calling it a risk input. "
+        "Instead, name only the risk itself and its magnitude/uncertainty — e.g. write "
+        "'valuation multiples imply high sensitivity to a growth deceleration' rather "
+        "than 'valuation is stretched/overvalued'; write 'earnings depend heavily on a "
+        "narrow set of margin and growth metrics' rather than 'fundamentals are strong "
+        "but priced in'. If you catch yourself characterizing whether the company is "
+        "doing well or poorly, rewrite the sentence before responding."
+    )
+    response = llm.invoke(
+        [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Claims under consideration:\n{all_claims}"},
+        ],
+        config=langfuse_config(session_id=state["symbol"], tags=[system_prompt[:20]]),
+    )
     return response.model_dump()
 
 def risk_node(state: GraphState) -> dict:

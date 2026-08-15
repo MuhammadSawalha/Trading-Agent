@@ -1,5 +1,7 @@
 import pytest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+from langfuse.langchain import CallbackHandler
+from src.graph import debate as debate_mod
 from src.graph.debate import bull_node, bear_node
 
 def _all_specialist_claims():
@@ -97,3 +99,49 @@ def test_bear_node_marks_undefended_rebuttals_on_bull_claims(mock_bear, mock_reb
     result = bear_node(state)
     assert result["bull_claims"][0]["rebutted_undefended"] is True
     assert len(result["bear_claims"]) == 1
+
+@patch("src.graph.debate.ChatBedrockConverse")
+def test_invoke_bull_llm_wires_langfuse_config_into_invoke_call(mock_chat_cls):
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value = MagicMock(claims=[])
+    mock_chat_cls.return_value.with_structured_output.return_value = mock_llm
+
+    debate_mod._invoke_bull_llm([], "AAPL")
+
+    _, kwargs = mock_llm.invoke.call_args
+    config = kwargs["config"]
+    assert config["metadata"] == {"langfuse_session_id": "AAPL"}
+    assert len(config["callbacks"]) == 1
+    assert isinstance(config["callbacks"][0], CallbackHandler)
+
+@patch("src.graph.debate.ChatBedrockConverse")
+def test_invoke_bear_llm_wires_langfuse_config_into_invoke_call(mock_chat_cls):
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value = MagicMock(claims=[])
+    mock_chat_cls.return_value.with_structured_output.return_value = mock_llm
+
+    debate_mod._invoke_bear_llm([], "MSFT")
+
+    _, kwargs = mock_llm.invoke.call_args
+    config = kwargs["config"]
+    assert config["metadata"] == {"langfuse_session_id": "MSFT"}
+    assert len(config["callbacks"]) == 1
+    assert isinstance(config["callbacks"][0], CallbackHandler)
+
+@patch("src.graph.debate.ChatBedrockConverse")
+def test_invoke_bear_rebuttal_llm_wires_langfuse_config_into_invoke_call(mock_chat_cls):
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value = MagicMock(
+        model_dump=lambda: {"rebutted_claim_indices": [], "succeeded_indices": []}
+    )
+    mock_chat_cls.return_value.with_structured_output.return_value = mock_llm
+
+    debate_mod._invoke_bear_rebuttal_llm([], [], "GOOG")
+
+    _, kwargs = mock_llm.invoke.call_args
+    config = kwargs["config"]
+    # Every LLM call in a symbol's pipeline run groups under that symbol's session,
+    # including the rebuttal step.
+    assert config["metadata"] == {"langfuse_session_id": "GOOG"}
+    assert len(config["callbacks"]) == 1
+    assert isinstance(config["callbacks"][0], CallbackHandler)

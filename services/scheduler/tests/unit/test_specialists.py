@@ -1,5 +1,7 @@
 import pytest
 from unittest.mock import MagicMock, patch
+from langfuse.langchain import CallbackHandler
+from src.graph import specialists as specialists_mod
 from src.graph.specialists import make_specialist_node
 
 def test_skips_llm_call_when_specialist_not_in_changed_set(monkeypatch):
@@ -77,6 +79,28 @@ def test_gives_up_and_records_a_single_failure_after_exhausting_retries(mock_inv
     assert "Macro_Options" not in outputs
     # One terminal started/failed pair for the whole attempt loop -- not one per attempt.
     assert history == [("Macro_Options", "started"), ("Macro_Options", "failed")]
+
+@patch("src.graph.specialists.ChatBedrockConverse")
+def test_invoke_llm_wires_langfuse_config_into_invoke_call(mock_chat_cls):
+    # _get_llm is @functools.lru_cache(maxsize=1): the Langfuse config can't be baked into
+    # the cached LLM constructor, it must be passed into the per-call .invoke(config=...).
+    specialists_mod._get_llm.cache_clear()
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value = MagicMock(model_dump=lambda: {"claims": []})
+    mock_chat_cls.return_value.with_structured_output.return_value = mock_llm
+
+    try:
+        specialists_mod._invoke_llm("Fundamentals system prompt", {"k": "v"}, "AAPL")
+    finally:
+        specialists_mod._get_llm.cache_clear()
+
+    _, kwargs = mock_llm.invoke.call_args
+    config = kwargs["config"]
+    # Sessions are grouped by symbol, per the plan's intent.
+    assert config["metadata"] == {"langfuse_session_id": "AAPL"}
+    assert config["tags"] == ["Fundamentals system prompt"[:20]]
+    assert len(config["callbacks"]) == 1
+    assert isinstance(config["callbacks"][0], CallbackHandler)
 
 def test_returns_only_specialist_output_not_full_state(monkeypatch):
     """Regression guard: ensure node returns partial state (only its own key), not full state echo."""
