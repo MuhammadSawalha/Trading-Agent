@@ -1,0 +1,5 @@
+image: "<ECR_REPO>/scheduler"
+replicas: 1
+hpa:
+  minReplicas: 1
+  maxReplicas: 2

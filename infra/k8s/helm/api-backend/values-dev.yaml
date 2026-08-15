@@ -1,0 +1,5 @@
+image: "<ECR_REPO>/api-backend"
+replicas: 1
+hpa:
+  minReplicas: 1
+  maxReplicas: 2

@@ -1,0 +1,50 @@
+# .github/workflows/deploy-dev.yml
+name: Deploy to dev
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [mcp-server, scheduler, api-backend, frontend, stock-scanner-mcp, tradingview-mcp]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_CI_ROLE_ARN }}
+          aws-region: us-east-1
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+      - name: Build and push
+        run: |
+          docker build -f services/${{ matrix.service }}/Dockerfile -t ${{ steps.ecr.outputs.registry }}/${{ matrix.service }}:${{ github.sha }} .
+          docker push ${{ steps.ecr.outputs.registry }}/${{ matrix.service }}:${{ github.sha }}
+        if: matrix.service != 'frontend'
+      - name: Build and push frontend
+        run: |
+          docker build -f frontend/Dockerfile -t ${{ steps.ecr.outputs.registry }}/frontend:${{ github.sha }} .
+          docker push ${{ steps.ecr.outputs.registry }}/frontend:${{ github.sha }}
+        if: matrix.service == 'frontend'
+
+  deploy-dev:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Configure kubeconfig
+        run: echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > $HOME/.kube/config
+      - name: Deploy each chart
+        run: |
+          for chart in mcp-server scheduler api-backend frontend stock-scanner-mcp tradingview-mcp; do
+            helm upgrade --install "$chart" "infra/k8s/helm/$chart" \
+              -n dev -f "infra/k8s/helm/$chart/values-dev.yaml" \
+              --set tag=${{ github.sha }} --wait --timeout 5m
+          done
+      - name: Run smoke test against dev
+        run: |
+          chmod +x scripts/smoke_test.sh
+          DEV_HOST=dev.stock-research.example ./scripts/smoke_test.sh
