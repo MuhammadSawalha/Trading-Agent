@@ -1,4 +1,7 @@
 from mcp.server.fastmcp import FastMCP
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from starlette.requests import Request
+from starlette.responses import Response
 
 
 def create_app() -> FastMCP:
@@ -26,6 +29,31 @@ def create_app() -> FastMCP:
     register_marketaux_tools(app)
     register_scoring_tool(app)
     register_process_history_tool(app)
+
+    # Exposes GET /metrics in Prometheus exposition format for the ServiceMonitor in
+    # monitoring/prometheus/servicemonitors.yaml to scrape.
+    #
+    # `prometheus-fastapi-instrumentator` (used for api-backend) isn't an option here:
+    # it's built around FastAPI's route/OpenAPI introspection, but
+    # `FastMCP.streamable_http_app()` / `.run(transport="streamable-http")` build and
+    # serve a bare Starlette app, not a FastAPI one. `FastMCP.run()` also has no hook to
+    # inject ASGI middleware or a sub-mounted app before it hands the Starlette app to
+    # uvicorn, so a manually-mounted `prometheus_client.make_asgi_app()` (or a
+    # `starlette_exporter` middleware) would require bypassing `.run()` entirely and
+    # reimplementing its uvicorn-serving logic.
+    #
+    # `custom_route` is FastMCP's own public extension point for adding plain HTTP
+    # routes (its docstring calls out health checks as the canonical example) to the
+    # Starlette app it builds internally, so it's used here to register /metrics without
+    # touching how the app is run. It returns `generate_latest()` against the default
+    # `prometheus_client` registry, which — via that library's auto-registered
+    # ProcessCollector/PlatformCollector/GCCollector — is a non-empty, valid exposition
+    # payload with no extra wiring. Per-request counters/histograms (analogous to what
+    # prometheus-fastapi-instrumentator gives api-backend for free) are not added here;
+    # they're in scope for a later task, not this one.
+    @app.custom_route("/metrics", methods=["GET"])
+    async def metrics(_request: Request) -> Response:
+        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
     return app
 

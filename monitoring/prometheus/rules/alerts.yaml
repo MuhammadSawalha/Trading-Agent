@@ -1,0 +1,54 @@
+# monitoring/prometheus/rules/alerts.yaml
+#
+# Per spec §9: alerts on error rate spikes, tool timeouts, circuit-breaker trips, and the
+# scheduler falling behind its own cadence.
+#
+# `mcp_tool_call_timeouts_total` and `circuit_breaker_state` are exported by the Scheduler
+# from services/scheduler/src/mcp_clients.py (same call sites as CircuitBreaker.record_failure
+# / allow_call and call_tool). `scheduler_last_tick_timestamp_seconds` is a gauge set alongside
+# record_heartbeat in services/scheduler/src/heartbeat.py. `http_requests_total` comes from
+# prometheus-fastapi-instrumentator (api-backend) / equivalent per-request instrumentation.
+#
+# Apply with:
+#   kubectl apply -f monitoring/prometheus/rules/alerts.yaml && kubectl -n monitoring get prometheusrule
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: stock-research-alerts
+  namespace: monitoring
+spec:
+  groups:
+    - name: stock-research
+      rules:
+        - alert: HighErrorRate
+          # PromQL binary operators only match samples whose label sets are identical, so a
+          # bare `rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m])`
+          # can only ever pair a 5xx series with ITSELF -- yielding exactly 1 for any handler
+          # with 5xx traffic, i.e. "any 5xx at all", not a 5% error rate. Summing away `status`
+          # (and every other per-request label) on both sides and grouping by `app` makes this
+          # a real per-service ratio. `app` exists on these samples because the ServiceMonitor
+          # in monitoring/prometheus/servicemonitors.yaml copies it over via targetLabels.
+          expr: |
+            sum by (app) (rate(http_requests_total{status=~"5.."}[5m]))
+              / sum by (app) (rate(http_requests_total[5m])) > 0.05
+          for: 5m
+          labels: { severity: warning }
+          annotations: { summary: "5xx rate above 5% for {{ $labels.app }}" }
+
+        - alert: ToolCallTimeouts
+          expr: increase(mcp_tool_call_timeouts_total[10m]) > 5
+          for: 0m
+          labels: { severity: warning }
+          annotations: { summary: "More than 5 MCP tool-call timeouts in 10 minutes" }
+
+        - alert: CircuitBreakerOpen
+          expr: circuit_breaker_state{server=~"tradingview|stock_scanner"} == 1
+          for: 5m
+          labels: { severity: warning }
+          annotations: { summary: "Shared TradingView circuit breaker has been open for 5+ minutes" }
+
+        - alert: SchedulerHeartbeatStale
+          expr: time() - scheduler_last_tick_timestamp_seconds > 180
+          for: 1m
+          labels: { severity: critical }
+          annotations: { summary: "Scheduler heartbeat stale — the single-point-of-failure scheduler may be hung (spec §10)" }

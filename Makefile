@@ -1,8 +1,10 @@
-.PHONY: up down test-mcp test-scheduler test-api install
+.PHONY: up down test-common test-mcp test-scheduler test-api install
 up:
 	docker compose up --build
 down:
 	docker compose down -v
+test-common:
+	cd packages/common && pytest
 test-mcp:
 	cd services/mcp-server && pytest
 test-scheduler:

@@ -6,6 +6,20 @@ dependencies = ["boto3>=1.35"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.3", "moto[dynamodb,s3]>=5.0", "freezegun>=1.5"]
+# tracing.py imports langfuse.langchain.CallbackHandler directly, which itself requires the
+# full `langchain` package (not just langchain-core) as a guard check at import time -- see
+# packages/common/common/tracing.py for the verified-against-installed-SDK rationale.
+#
+# Optional rather than unconditional because services/mcp-server also depends on `common`
+# (for dynamo.py) but makes no LLM calls and never imports tracing.py; forcing langfuse +
+# the whole langchain stack into its image would bloat it and widen its CVE surface for
+# nothing. Consumers that DO trace depend on `common[tracing]`.
+#
+# >=4.0,<5, not >=2.50: tracing.py uses the v4 API (`from langfuse.langchain import
+# CallbackHandler`), which does not exist in langfuse 2.x -- there the handler lives at
+# `langfuse.callback.CallbackHandler` with an entirely different constructor signature, so
+# a resolver landing on 2.x would break the import outright.
+tracing = ["langfuse>=4.0,<5", "langchain>=1.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

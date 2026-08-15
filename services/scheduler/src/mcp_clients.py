@@ -1,11 +1,48 @@
+import asyncio
 import json
 import os
 import uuid
 from datetime import datetime, timezone
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from prometheus_client import Counter, Gauge
 from .rate_limit.circuit_breaker import CircuitBreaker
 
 CIRCUIT_BREAKER_PROTECTED_SERVERS = {"tradingview", "stock_scanner"}
+
+# Task 55: feeds the CircuitBreakerOpen alert (monitoring/prometheus/rules/alerts.yaml),
+# which matches on server=~"tradingview|stock_scanner". Numeric mapping matches the one
+# documented on Task 57's Grafana panel: 0=closed, 1=open, 2=half_open.
+_CIRCUIT_BREAKER_STATE_VALUES = {"closed": 0, "open": 1, "half_open": 2}
+
+CIRCUIT_BREAKER_STATE = Gauge(
+    "circuit_breaker_state",
+    "Circuit breaker state (0=closed, 1=open, 2=half_open) per protected MCP server",
+    ["server"],
+)
+
+# Feeds the ToolCallTimeouts alert. Only incremented when a tool call is cut off by the
+# asyncio.wait_for below -- record_failure/the circuit breaker still fire on ANY exception,
+# unchanged; this is a narrower, additional signal, not a replacement.
+MCP_TOOL_CALL_TIMEOUTS = Counter(
+    "mcp_tool_call_timeouts_total",
+    "Number of MCP tool calls that were cut off by the per-call timeout",
+)
+
+# The underlying transport (langchain_mcp_adapters over MCP's SSE client) has no per-call
+# timeout tight enough to be useful here: the JSON-RPC session-level read timeout is never
+# configured (stays None, i.e. no timeout), and the only naturally-raised httpx timeout is a
+# 5-minute SSE-read-idle timeout -- far too coarse for a 60s scheduler tick and the
+# "more than 5 timeouts in 10 minutes" alert threshold. Wrapping the call explicitly gives a
+# distinguishable, tick-appropriate timeout signal instead.
+_TOOL_CALL_TIMEOUT_SECONDS = 30.0
+
+def _publish_circuit_breaker_state() -> None:
+    """Both tradingview and stock_scanner share ONE CircuitBreaker instance (see
+    _tradingview_breaker below), so mirror its single state onto both label values every
+    time the shared breaker's state might have changed."""
+    value = _CIRCUIT_BREAKER_STATE_VALUES[_tradingview_breaker.state]
+    for server in CIRCUIT_BREAKER_PROTECTED_SERVERS:
+        CIRCUIT_BREAKER_STATE.labels(server=server).set(value)
 
 def build_mcp_client() -> MultiServerMCPClient:
     return MultiServerMCPClient({
@@ -27,9 +64,20 @@ class CircuitOpenError(Exception):
 async def call_tool(client: MultiServerMCPClient, server: str, tool_name: str, **kwargs) -> dict:
     now = datetime.now(timezone.utc)
     protected = server in CIRCUIT_BREAKER_PROTECTED_SERVERS
-    if protected and not _tradingview_breaker.allow_call(now):
-        raise CircuitOpenError(f"circuit open for shared TradingView dependency (server={server})")
-    try:
+    if protected:
+        allowed = _tradingview_breaker.allow_call(now)
+        _publish_circuit_breaker_state()  # allow_call() can flip open -> half_open
+        if not allowed:
+            raise CircuitOpenError(f"circuit open for shared TradingView dependency (server={server})")
+
+    async def _do_call() -> dict:
+        # get_tools() is inside the timeout, not just ainvoke(): it opens a fresh MCP session
+        # (SSE handshake + a tools/list round-trip) against the upstream server, and per the
+        # note on _TOOL_CALL_TIMEOUT_SECONDS above the session-level JSON-RPC read timeout is
+        # never configured -- so a wedged tradingview/stock_scanner proxy hangs HERE at least
+        # as readily as it does in the invoke, and an unbounded hang would block the
+        # single-replica scheduler's tick forever while staying invisible to the
+        # ToolCallTimeouts alert.
         tools = await client.get_tools(server_name=server)
         tool = next(t for t in tools if t.name == tool_name)
         # Invoke via the ToolCall input shape rather than a plain dict: langchain_mcp_adapters
@@ -40,13 +88,24 @@ async def call_tool(client: MultiServerMCPClient, server: str, tool_name: str, *
         message = await tool.ainvoke(
             {"type": "tool_call", "name": tool_name, "args": kwargs, "id": str(uuid.uuid4())}
         )
-        result = _extract_structured_result(message)
+        return _extract_structured_result(message)
+
+    try:
+        result = await asyncio.wait_for(_do_call(), timeout=_TOOL_CALL_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        MCP_TOOL_CALL_TIMEOUTS.inc()
+        if protected:
+            _tradingview_breaker.record_failure(now)
+            _publish_circuit_breaker_state()
+        raise
     except Exception:
         if protected:
             _tradingview_breaker.record_failure(now)
+            _publish_circuit_breaker_state()
         raise
     if protected:
         _tradingview_breaker.record_success(now)
+        _publish_circuit_breaker_state()
     return result
 
 def _extract_structured_result(message) -> dict:

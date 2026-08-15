@@ -21,7 +21,12 @@ jobs:
         with: { python-version: "3.12" }
       - name: Install service
         working-directory: ${{ matrix.service == 'common' && 'packages/common' || format('services/{0}', matrix.service) }}
-        run: pip install -e ".[dev]"
+        # packages/common needs its `tracing` extra here (and only here): langfuse/langchain
+        # are optional deps of common, but packages/common/tests/test_tracing.py imports
+        # common/tracing.py, which needs them. The services get them transitively -- scheduler
+        # and api-backend depend on `common[tracing]`, mcp-server deliberately does not -- and
+        # have no `tracing` extra of their own to request.
+        run: pip install -e "${{ matrix.service == 'common' && '.[dev,tracing]' || '.[dev]' }}"
       - name: Install common (path dependency, for services other than common itself)
         if: matrix.service != 'common'
         run: pip install -e packages/common

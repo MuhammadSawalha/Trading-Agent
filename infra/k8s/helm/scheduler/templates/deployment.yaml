@@ -15,7 +15,7 @@ spec:
       containers:
         - name: scheduler
           image: "{{ .Values.image }}:{{ .Values.tag }}"
-          ports: [{ containerPort: 8002 }]
+          ports: [{ name: metrics, containerPort: 8002 }]
           envFrom:
             - configMapRef: { name: scheduler-config }
             - secretRef: { name: scheduler-secrets }

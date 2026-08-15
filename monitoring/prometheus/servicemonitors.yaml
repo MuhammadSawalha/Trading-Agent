@@ -1,0 +1,33 @@
+# ServiceMonitor for the three scrapable Stock Research Agent workloads (frontend is
+# static and out of scope -- see infra/k8s/helm/{mcp-server,api-backend,scheduler}).
+#
+# Matches Services (not Pods -- see each chart's service.yaml `metadata.labels`) by an
+# `app` label in {mcp-server, api-backend, scheduler}, across the `dev` and `prod`
+# namespaces those charts are deployed into, and scrapes the named `metrics` port each
+# Service now exposes.
+#
+# Apply with:
+#   kubectl apply -f monitoring/prometheus/servicemonitors.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: stock-research-services
+  namespace: monitoring
+spec:
+  # prometheus-operator only attaches its own discovery labels (namespace/service/pod/
+  # container/endpoint/job) to scraped samples by default -- the selected Service's OWN
+  # metadata.labels are dropped unless named here. `targetLabels` is a top-level spec
+  # field (not per-endpoint) and copies Service.metadata.labels.app onto every sample as
+  # an `app` Prometheus label. Without it the alert annotations in
+  # monitoring/prometheus/rules/alerts.yaml render `{{ $labels.app }}` empty, and both
+  # those rules' and the Grafana dashboard's `by (app)` aggregations collapse to a
+  # single unlabelled series.
+  targetLabels: [app]
+  namespaceSelector:
+    matchNames: [dev, prod]
+  selector:
+    matchExpressions:
+      - { key: app, operator: In, values: [mcp-server, api-backend, scheduler] }
+  endpoints:
+    - port: metrics
+      interval: 30s

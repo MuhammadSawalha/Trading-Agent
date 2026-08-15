@@ -5,6 +5,7 @@ from langchain_aws import ChatBedrockConverse
 from pydantic import BaseModel
 from .state import GraphState, SpecialistOutput
 from common.dynamo import read_agent_output, write_agent_output, append_process_history
+from common.tracing import langfuse_config
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -44,12 +45,15 @@ def _get_llm():
         region_name="us-east-1",
     ).with_structured_output(SpecialistResponse)
 
-def _invoke_llm(system_prompt: str, tool_data: dict) -> dict:
+def _invoke_llm(system_prompt: str, tool_data: dict, symbol: str) -> dict:
     llm = _get_llm()
-    response = llm.invoke([
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": f"Data:\n{tool_data}"},
-    ])
+    response = llm.invoke(
+        [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Data:\n{tool_data}"},
+        ],
+        config=langfuse_config(session_id=symbol, tags=[system_prompt[:20]]),
+    )
     return response.model_dump()
 
 FUNDAMENTALS_PROMPT = (
@@ -104,7 +108,7 @@ def make_specialist_node(name: str, system_prompt: str):
         last_error: Exception | None = None
         for attempt in range(1, _MAX_ATTEMPTS + 1):
             try:
-                output: SpecialistOutput = _invoke_llm(system_prompt, state.get("tool_data", {}).get(name, {}))
+                output: SpecialistOutput = _invoke_llm(system_prompt, state.get("tool_data", {}).get(name, {}), symbol)
                 write_agent_output(symbol, display_name, output)
                 append_process_history(symbol, display_name, reason="pipeline_run", status="finished", timestamp=datetime.now(timezone.utc))
                 return {name: output}

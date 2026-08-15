@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: scheduler
+  # ServiceMonitor.spec.selector (monitoring/prometheus/servicemonitors.yaml) matches
+  # against this Service's own metadata.labels, not spec.selector below (which only
+  # picks the pod this Service routes to) -- so this label is what makes the
+  # stock-research-services ServiceMonitor pick up scheduler at all.
+  labels: { app: scheduler }
+spec:
+  selector: { app: scheduler }
+  ports: [{ name: metrics, port: 8002, targetPort: 8002 }]
