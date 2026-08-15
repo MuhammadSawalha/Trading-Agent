@@ -15,10 +15,10 @@ resource "aws_security_group" "cluster" {
     cidr_blocks = ["0.0.0.0/0"]
   }
   ingress {
-    from_port = 6443
-    to_port   = 6443
-    protocol  = "tcp"
-    self      = true
+    from_port   = 6443
+    to_port     = 6443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"] # needed for kubectl/helm from GitHub Actions runners and local admin access; tighten to known IP ranges before real deployment
   }
   ingress {
     from_port = 0
@@ -32,6 +32,11 @@ resource "aws_security_group" "cluster" {
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
+}
+
+resource "aws_key_pair" "cluster" {
+  key_name   = "stock-research-${var.env}"
+  public_key = var.ssh_public_key
 }
 
 data "aws_ami" "ubuntu" {
@@ -49,6 +54,7 @@ resource "aws_instance" "control_plane" {
   subnet_id              = var.subnet_ids[0]
   vpc_security_group_ids = [aws_security_group.cluster.id]
   iam_instance_profile   = var.instance_profile_name
+  key_name               = aws_key_pair.cluster.key_name
   user_data = templatefile("${path.module}/bootstrap.sh.tpl", {
     role = "control-plane", control_plane_ip = "", cluster_token = var.cluster_token
   })
@@ -62,6 +68,7 @@ resource "aws_instance" "worker" {
   subnet_id              = var.subnet_ids[count.index % length(var.subnet_ids)]
   vpc_security_group_ids = [aws_security_group.cluster.id]
   iam_instance_profile   = var.instance_profile_name
+  key_name               = aws_key_pair.cluster.key_name
   user_data = templatefile("${path.module}/bootstrap.sh.tpl", {
     role = "worker", control_plane_ip = aws_instance.control_plane.private_ip, cluster_token = var.cluster_token
   })

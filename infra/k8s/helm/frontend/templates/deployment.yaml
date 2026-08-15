@@ -14,6 +14,12 @@ spec:
         - name: frontend
           image: "{{ .Values.image }}:{{ .Values.tag }}"
           ports: [{ containerPort: 80 }]
+          env:
+            # nginx's `resolver` directive skips /etc/resolv.conf's search-domain expansion, so
+            # the bare Service name that plain DNS clients resolve fine needs to be fully
+            # qualified here instead (see frontend/nginx.conf).
+            - name: API_BACKEND_HOST
+              value: "api-backend.{{ .Release.Namespace }}.svc.cluster.local"
           resources: {{ toYaml .Values.resources | nindent 12 }}
           livenessProbe:
             httpGet: { path: /, port: 80 }

@@ -13,3 +13,8 @@ prometheus:
     # own `monitoring` namespace and the workloads' `dev`/`prod` namespaces below) rather
     # than only ones this Helm release itself owns.
     serviceMonitorSelectorNilUsesHelmValues: false
+    # Same problem, same fix, for PrometheusRule: without this the chart's default
+    # ruleSelector only matches rules labeled `release: kube-prometheus-stack`, so
+    # monitoring/prometheus/rules/alerts.yaml (which carries no such label, since it's
+    # applied independently of this Helm release) is silently never loaded.
+    ruleSelectorNilUsesHelmValues: false

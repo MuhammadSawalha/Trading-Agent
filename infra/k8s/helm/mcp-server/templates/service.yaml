@@ -10,3 +10,10 @@ metadata:
 spec:
   selector: { app: mcp-server }
   ports: [{ name: metrics, port: 8001, targetPort: 8001 }]
+  # mcp-server's streamable-http transport keeps session state in the memory of whichever pod
+  # handled the initial POST; the HPA (templates/hpa.yaml) can scale this to >1 replica, and
+  # without affinity the Service load-balances every request independently, so a later request
+  # in the same session can land on a pod that never saw it -- MCP client sees "Session
+  # terminated". Pinning each client (the scheduler, api-backend) to one backend pod for its
+  # ClientIP keeps a whole session on the pod that started it.
+  sessionAffinity: ClientIP

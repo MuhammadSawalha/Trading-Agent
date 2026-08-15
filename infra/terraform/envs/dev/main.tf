@@ -24,6 +24,7 @@ variable "cluster_token" {
   type      = string
   sensitive = true
 }
+variable "ssh_public_key" { type = string }
 
 module "cluster" {
   source                = "../../modules/cluster"
@@ -32,6 +33,7 @@ module "cluster" {
   subnet_ids            = module.network.public_subnet_ids
   instance_profile_name = module.iam.instance_profile_name
   cluster_token         = var.cluster_token
+  ssh_public_key        = var.ssh_public_key
 }
 
 output "control_plane_public_ip" {

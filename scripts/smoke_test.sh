@@ -5,10 +5,11 @@ set -euo pipefail
 # instead of the local docker-compose stack. frontend/nginx.conf proxies
 # /api/ -> api-backend:8080/ (stripping the /api/ prefix), and
 # infra/k8s/helm/frontend/templates/ingress.yaml routes all paths through the
-# frontend service, so https://$DEV_HOST/api/... reaches api-backend's own
+# frontend service, so http://$DEV_HOST/api/... reaches api-backend's own
 # routes correctly. Locally, api-backend is reachable directly on :8080 with
-# no /api prefix.
-BASE_URL="${DEV_HOST:+https://${DEV_HOST}/api}"
+# no /api prefix. Plain http, not https: the dev ELB (infra/terraform/modules/cluster)
+# only has an HTTP:80 listener -- there's no ACM cert or TLS termination in front of it.
+BASE_URL="${DEV_HOST:+http://${DEV_HOST}/api}"
 BASE_URL="${BASE_URL:-http://localhost:8080}"
 
 echo "Waiting for services..."
