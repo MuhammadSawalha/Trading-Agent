@@ -68,7 +68,16 @@ resource "aws_iam_role" "ci" {
         Principal = { Federated = data.aws_iam_openid_connect_provider.github_actions.arn }
         Condition = {
           StringEquals = { "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com" }
-          StringLike   = { "token.actions.githubusercontent.com:sub" = "repo:${var.github_repo}:*" }
+          # This org/repo has GitHub's "include repository/owner ID in the OIDC subject claim"
+          # setting enabled, which changes the sub claim from the plain
+          # "repo:OWNER/REPO:ref:..." to "repo:OWNER@<ownerId>/REPO@<repoId>:ref:..." --
+          # confirmed against the actual failing calls in CloudTrail (sts.amazonaws.com
+          # AssumeRoleWithWebIdentity, errorCode AccessDenied), where the token's
+          # userIdentity.userName was literally
+          # "repo:MuhammadSawalha@134552037/Trading-Agent@1314195801:ref:refs/heads/main". A
+          # plain "repo:${var.github_repo}:*" pattern never matches that string at all -- the
+          # wildcards below cover the injected numeric IDs without hardcoding them.
+          StringLike = { "token.actions.githubusercontent.com:sub" = "repo:${split("/", var.github_repo)[0]}@*/${split("/", var.github_repo)[1]}@*:*" }
         }
       },
       {
@@ -83,7 +92,16 @@ resource "aws_iam_role" "ci" {
         Principal = { Federated = data.aws_iam_openid_connect_provider.github_actions.arn }
         Condition = {
           StringEquals = { "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com" }
-          StringLike   = { "token.actions.githubusercontent.com:sub" = "repo:${var.github_repo}:*" }
+          # This org/repo has GitHub's "include repository/owner ID in the OIDC subject claim"
+          # setting enabled, which changes the sub claim from the plain
+          # "repo:OWNER/REPO:ref:..." to "repo:OWNER@<ownerId>/REPO@<repoId>:ref:..." --
+          # confirmed against the actual failing calls in CloudTrail (sts.amazonaws.com
+          # AssumeRoleWithWebIdentity, errorCode AccessDenied), where the token's
+          # userIdentity.userName was literally
+          # "repo:MuhammadSawalha@134552037/Trading-Agent@1314195801:ref:refs/heads/main". A
+          # plain "repo:${var.github_repo}:*" pattern never matches that string at all -- the
+          # wildcards below cover the injected numeric IDs without hardcoding them.
+          StringLike = { "token.actions.githubusercontent.com:sub" = "repo:${split("/", var.github_repo)[0]}@*/${split("/", var.github_repo)[1]}@*:*" }
         }
       },
     ]
