@@ -1,6 +1,7 @@
 image: "<ECR_REPO>/mcp-server"
 tag: "latest"
 replicas: 2
+dynamodbTableSuffix: ""
 resources:
   requests: { cpu: "100m", memory: "256Mi" }
   limits: { cpu: "500m", memory: "512Mi" }

@@ -4,4 +4,5 @@ metadata:
   name: api-backend-config
 data:
   AWS_REGION: "us-east-1"
+  DYNAMODB_TABLE_SUFFIX: "{{ .Values.dynamodbTableSuffix }}"
   OWN_MCP_SERVER_URL: "http://mcp-server:8001/mcp"
