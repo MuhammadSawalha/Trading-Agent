@@ -1,0 +1,55 @@
+# .github/workflows/pr-checks.yml
+name: PR Checks
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [mcp-server, scheduler, api-backend, common]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Install service
+        working-directory: ${{ matrix.service == 'common' && 'packages/common' || format('services/{0}', matrix.service) }}
+        run: pip install -e ".[dev]"
+      - name: Install common (path dependency, for services other than common itself)
+        if: matrix.service != 'common'
+        run: pip install -e packages/common
+      - name: Run tests
+        working-directory: ${{ matrix.service == 'common' && 'packages/common' || format('services/{0}', matrix.service) }}
+        run: pytest --junitxml=results.xml -v
+      - name: Publish test results to job summary
+        if: always()
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          files: "**/results.xml"
+
+  frontend-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - working-directory: frontend
+        run: npm ci && npm run lint && npx vitest run
+
+  helm-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - run: |
+          for chart in infra/k8s/helm/*/; do helm lint "$chart"; done
+
+  terraform-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - working-directory: infra/terraform/envs/dev
+        run: terraform init -backend=false && terraform validate
