@@ -1,4 +1,5 @@
 image: "<ECR_REPO>/scheduler"
+tag: "latest"
 replicas: 2
 hpa:
   minReplicas: 2
