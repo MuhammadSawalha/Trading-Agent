@@ -12,9 +12,9 @@ dependencies = [
     "prometheus-fastapi-instrumentator>=7.0.0",
     "langchain-mcp-adapters>=0.1.0",
     "langchain-aws>=0.2.0",
-    "langfuse>=2.50",
+    "langfuse>=4.0,<5",
     "langchain>=1.0",
-    "common @ file:../../packages/common",
+    "common[tracing] @ file:../../packages/common",
 ]
 
 [project.optional-dependencies]

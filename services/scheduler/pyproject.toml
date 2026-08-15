@@ -11,9 +11,9 @@ dependencies = [
     "langchain-aws>=0.2.0",
     "langgraph>=0.2.0",
     "prometheus-client>=0.20.0",
-    "langfuse>=2.50",
+    "langfuse>=4.0,<5",
     "langchain>=1.0",
-    "common @ file:../../packages/common",
+    "common[tracing] @ file:../../packages/common",
 ]
 
 [project.optional-dependencies]
