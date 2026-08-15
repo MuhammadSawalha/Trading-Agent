@@ -1,0 +1,31 @@
+# .github/workflows/promote-prod.yml
+name: Promote to prod
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag (git SHA) to promote — must already be deployed and verified in dev"
+        required: true
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    environment: production  # GitHub Environment with required reviewers configured — the manual gate
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update prod values files to the promoted tag
+        run: |
+          for chart in mcp-server scheduler api-backend frontend stock-scanner-mcp tradingview-mcp; do
+            sed -i "s/^tag: .*/tag: \"${{ inputs.image_tag }}\"/" "infra/k8s/helm/$chart/values-prod.yaml"
+          done
+      - name: Commit the tag bump
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add infra/k8s/helm/*/values-prod.yaml
+          git commit -m "chore: promote ${{ inputs.image_tag }} to prod"
+          git push
+      - name: Trigger ArgoCD sync
+        run: |
+          argocd app sync mcp-server-prod scheduler-prod api-backend-prod frontend-prod stock-scanner-mcp-prod tradingview-mcp-prod \
+            --server ${{ secrets.ARGOCD_SERVER }} --auth-token ${{ secrets.ARGOCD_AUTH_TOKEN }}

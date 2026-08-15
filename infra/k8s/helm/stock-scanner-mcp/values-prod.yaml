@@ -1,0 +1,5 @@
+image: "<ECR_REPO>/stock-scanner-mcp"
+replicas: 2
+hpa:
+  minReplicas: 2
+  maxReplicas: 4
