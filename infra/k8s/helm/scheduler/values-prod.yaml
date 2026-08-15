@@ -1,0 +1,7 @@
+image: "<ECR_REPO>/scheduler"
+tag: "latest"
+replicas: 2
+dynamodbTableSuffix: "-prod"
+hpa:
+  minReplicas: 2
+  maxReplicas: 4

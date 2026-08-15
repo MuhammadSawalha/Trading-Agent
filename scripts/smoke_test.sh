@@ -1,46 +1,66 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# DEV_HOST, when set, points this script at a deployed dev Kubernetes host
+# instead of the local docker-compose stack. frontend/nginx.conf proxies
+# /api/ -> api-backend:8080/ (stripping the /api/ prefix), and
+# infra/k8s/helm/frontend/templates/ingress.yaml routes all paths through the
+# frontend service, so https://$DEV_HOST/api/... reaches api-backend's own
+# routes correctly. Locally, api-backend is reachable directly on :8080 with
+# no /api prefix.
+BASE_URL="${DEV_HOST:+https://${DEV_HOST}/api}"
+BASE_URL="${BASE_URL:-http://localhost:8080}"
+
 echo "Waiting for services..."
-# mcp-server is a FastMCP streamable_http_app: it only mounts /mcp, with no
-# bare "/" or "/healthz" route, so a 2xx-requiring "curl -sf" against either
-# would 404 forever. Any HTTP response (including 4xx/405/406) means the port
-# is up, so drop -f here and just wait for curl to stop failing on connection
-# refused/unreachable. Bounded to 90s so a crashlooping container fails fast
-# with a diagnostic instead of hanging forever.
-mcp_up=0
-for i in $(seq 1 45); do
-  if curl -s -o /dev/null http://localhost:8001/mcp; then
-    mcp_up=1
-    break
+# mcp-server is internal-only: it is not exposed through the frontend ingress
+# or any /api path, so a GitHub Actions runner testing a deployed dev host
+# cannot reach it directly. Only run this readiness check against the local
+# docker-compose stack (DEV_HOST unset); when DEV_HOST is set, mcp-server's
+# health is exercised implicitly by the Manager-verdict poll at the end of
+# this script -- an unreachable mcp-server would just mean that poll times
+# out, which is still a correct failure signal.
+if [ -z "${DEV_HOST:-}" ]; then
+  # mcp-server is a FastMCP streamable_http_app: it only mounts /mcp, with no
+  # bare "/" or "/healthz" route, so a 2xx-requiring "curl -sf" against either
+  # would 404 forever. Any HTTP response (including 4xx/405/406) means the port
+  # is up, so drop -f here and just wait for curl to stop failing on connection
+  # refused/unreachable. Bounded to 90s so a crashlooping container fails fast
+  # with a diagnostic instead of hanging forever.
+  mcp_up=0
+  for i in $(seq 1 45); do
+    if curl -s -o /dev/null http://localhost:8001/mcp; then
+      mcp_up=1
+      break
+    fi
+    sleep 2
+  done
+  if [ "$mcp_up" -ne 1 ]; then
+    echo "FAILED: mcp-server never came up on http://localhost:8001/mcp after 90s"
+    exit 1
   fi
-  sleep 2
-done
-if [ "$mcp_up" -ne 1 ]; then
-  echo "FAILED: mcp-server never came up on http://localhost:8001/mcp after 90s"
-  exit 1
 fi
 
-# api-backend genuinely serves a 2xx /healthz (see services/api-backend/src/app.py),
-# on port 8080 per docker-compose.yaml -- port 8000 in this stack belongs to
-# dynamodb-local, not api-backend. Also bounded to 90s for the same reason.
+# api-backend genuinely serves a 2xx /healthz (see services/api-backend/src/app.py).
+# Locally that's port 8080 per docker-compose.yaml -- port 8000 in that stack
+# belongs to dynamodb-local, not api-backend. Bounded to 90s for the same
+# crashloop-fails-fast reason as the mcp-server check above.
 api_up=0
 for i in $(seq 1 45); do
-  if curl -sf http://localhost:8080/healthz >/dev/null; then
+  if curl -sf "$BASE_URL/healthz" >/dev/null; then
     api_up=1
     break
   fi
   sleep 2
 done
 if [ "$api_up" -ne 1 ]; then
-  echo "FAILED: api-backend never came up on http://localhost:8080/healthz after 90s"
+  echo "FAILED: api-backend never came up on $BASE_URL/healthz after 90s"
   exit 1
 fi
 
 echo "Adding AAPL to watchlist..."
 # watchlist router is mounted with prefix /watchlist and no /api prefix
 # (see services/api-backend/src/routers/watchlist.py and app.py).
-curl -sf -X POST http://localhost:8080/watchlist/AAPL
+curl -sf -X POST "$BASE_URL/watchlist/AAPL"
 
 echo "Waiting for the Scheduler's first tick to process it (up to 90s)..."
 # Scheduler tick interval is 60s (services/scheduler/src/loop.py run_forever
@@ -50,7 +70,7 @@ for i in $(seq 1 45); do
   # the real path is /symbols/{symbol}/detail. A single transient poll failure (non-2xx,
   # connection blip) must not kill the whole script under `set -e` -- fall through to the
   # next retry within the 90s budget instead.
-  DETAIL=$(curl -sf http://localhost:8080/symbols/AAPL/detail) || { sleep 2; continue; }
+  DETAIL=$(curl -sf "$BASE_URL/symbols/AAPL/detail") || { sleep 2; continue; }
   # symbol_detail() (services/api-backend/src/routers/dashboard.py) unconditionally writes an
   # "agents.manager" entry for every symbol, even before any pipeline has run -- it falls back
   # to `read_agent_output(...) or {}`, so a plain `grep -q '"Manager"'` would pass on the very

@@ -1,0 +1,6 @@
+image: "<ECR_REPO>/tradingview-mcp"
+tag: "latest"
+replicas: 2
+hpa:
+  minReplicas: 2
+  maxReplicas: 4

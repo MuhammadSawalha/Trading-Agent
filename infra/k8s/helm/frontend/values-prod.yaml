@@ -1,0 +1,7 @@
+image: "<ECR_REPO>/frontend"
+tag: "latest"
+replicas: 2
+host: "stock-research.example"
+hpa:
+  minReplicas: 2
+  maxReplicas: 4
