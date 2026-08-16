@@ -61,15 +61,50 @@ resource "aws_iam_role" "ci" {
   name = "stock-research-ci"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect    = "Allow"
-      Action    = "sts:AssumeRoleWithWebIdentity"
-      Principal = { Federated = data.aws_iam_openid_connect_provider.github_actions.arn }
-      Condition = {
-        StringEquals = { "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com" }
-        StringLike   = { "token.actions.githubusercontent.com:sub" = "repo:${var.github_repo}:*" }
-      }
-    }]
+    Statement = [
+      {
+        Effect    = "Allow"
+        Action    = "sts:AssumeRoleWithWebIdentity"
+        Principal = { Federated = data.aws_iam_openid_connect_provider.github_actions.arn }
+        Condition = {
+          StringEquals = { "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com" }
+          # This org/repo has GitHub's "include repository/owner ID in the OIDC subject claim"
+          # setting enabled, which changes the sub claim from the plain
+          # "repo:OWNER/REPO:ref:..." to "repo:OWNER@<ownerId>/REPO@<repoId>:ref:..." --
+          # confirmed against the actual failing calls in CloudTrail (sts.amazonaws.com
+          # AssumeRoleWithWebIdentity, errorCode AccessDenied), where the token's
+          # userIdentity.userName was literally
+          # "repo:MuhammadSawalha@134552037/Trading-Agent@1314195801:ref:refs/heads/main". A
+          # plain "repo:${var.github_repo}:*" pattern never matches that string at all -- the
+          # wildcards below cover the injected numeric IDs without hardcoding them.
+          StringLike = { "token.actions.githubusercontent.com:sub" = "repo:${split("/", var.github_repo)[0]}@*/${split("/", var.github_repo)[1]}@*:*" }
+        }
+      },
+      {
+        # aws-actions/configure-aws-credentials tags the assumed session by default (actor,
+        # repository, workflow, etc.) -- STS treats that as part of the same
+        # AssumeRoleWithWebIdentity call, so without a matching sts:TagSession grant here the
+        # whole call is rejected with a generic "Not authorized to perform
+        # sts:AssumeRoleWithWebIdentity", even though the AssumeRoleWithWebIdentity statement
+        # above is itself correct.
+        Effect    = "Allow"
+        Action    = "sts:TagSession"
+        Principal = { Federated = data.aws_iam_openid_connect_provider.github_actions.arn }
+        Condition = {
+          StringEquals = { "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com" }
+          # This org/repo has GitHub's "include repository/owner ID in the OIDC subject claim"
+          # setting enabled, which changes the sub claim from the plain
+          # "repo:OWNER/REPO:ref:..." to "repo:OWNER@<ownerId>/REPO@<repoId>:ref:..." --
+          # confirmed against the actual failing calls in CloudTrail (sts.amazonaws.com
+          # AssumeRoleWithWebIdentity, errorCode AccessDenied), where the token's
+          # userIdentity.userName was literally
+          # "repo:MuhammadSawalha@134552037/Trading-Agent@1314195801:ref:refs/heads/main". A
+          # plain "repo:${var.github_repo}:*" pattern never matches that string at all -- the
+          # wildcards below cover the injected numeric IDs without hardcoding them.
+          StringLike = { "token.actions.githubusercontent.com:sub" = "repo:${split("/", var.github_repo)[0]}@*/${split("/", var.github_repo)[1]}@*:*" }
+        }
+      },
+    ]
   })
 }
 

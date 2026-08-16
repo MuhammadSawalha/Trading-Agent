@@ -1,7 +1,12 @@
 image: "<ECR_REPO>/frontend"
 tag: "latest"
 replicas: 2
-host: "dev.stock-research.example"
+# Empty = ingress-nginx catch-all (matches any Host header) rather than requiring one exact
+# hostname. There's no real DNS/ACM set up for dev (see infra/terraform), so dev is reached
+# directly via the ELB's own DNS name -- CI's `helm upgrade` loop (deploy-dev.yml) doesn't
+# (and shouldn't need to) pass a --set host=... override for that to work, and a real domain
+# can still be set here later without any code change once one exists.
+host: ""
 resources:
   requests: { cpu: "50m", memory: "64Mi" }
   limits: { cpu: "200m", memory: "128Mi" }
