@@ -1,0 +1,89 @@
+name: Provision & Bootstrap Cluster
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+# Guards against two runs racing the same dev Terraform state.
+concurrency:
+  group: provision-cluster-dev
+  cancel-in-progress: false
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    outputs:
+      control_plane_ip: ${{ steps.tf-output.outputs.control_plane_ip }}
+      elb_dns_name: ${{ steps.tf-output.outputs.elb_dns_name }}
+    defaults:
+      run:
+        working-directory: infra/terraform/envs/dev
+    steps:
+      - uses: actions/checkout@v4
+
+      # Static keys, not the existing AWS_CI_ROLE_ARN OIDC role -- that role only carries
+      # ECR permissions (infra/terraform/envs/shared/main.tf), and broadening it to
+      # EC2/VPC/IAM-creation scope would widen a CI role's reach on this shared,
+      # multi-student AWS account. These keys are this repo's own IAM user, scoped to this
+      # one workflow's use.
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.TF_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.TF_AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.5"
+          terraform_wrapper: false
+
+      - name: Terraform init
+        run: terraform init
+
+      # aws-learning-budget-keeper-function (this shared account's cost-control Lambda)
+      # stops EC2 instances on a schedule -- `terraform apply` alone is a no-op against a
+      # stopped-but-still-present instance, since Terraform only tracks that the resource
+      # exists, not its power state. This instance also has no Elastic IP (account is over
+      # its EIP quota, see infra/terraform/modules/cluster/bootstrap.sh.tpl), so its public
+      # IP and the TLS cert baked in at install time go stale on every stop/start. Detecting
+      # "stopped" here and forcing -replace recreates the instance with a fresh IP/cert
+      # baked in together, instead of leaving it stopped or racing that same staleness a
+      # plain `start-instances` would hit.
+      - name: Detect stopped instances that need replacing
+        id: detect
+        run: |
+          set -euo pipefail
+          REPLACE_ARGS=""
+          for NAME in stock-research-dev-control-plane stock-research-dev-worker-0 stock-research-dev-worker-1; do
+            FOUND=$(aws ec2 describe-instances \
+              --filters "Name=tag:Name,Values=$NAME" "Name=instance-state-name,Values=stopped,stopping" \
+              --query 'Reservations[].Instances[].InstanceId' --output text)
+            if [ -n "$FOUND" ]; then
+              case "$NAME" in
+                stock-research-dev-control-plane) ADDR="module.cluster.aws_instance.control_plane" ;;
+                stock-research-dev-worker-0)       ADDR="module.cluster.aws_instance.worker[0]" ;;
+                stock-research-dev-worker-1)       ADDR="module.cluster.aws_instance.worker[1]" ;;
+              esac
+              echo "Found $NAME stopped ($FOUND) -- will replace $ADDR"
+              REPLACE_ARGS="$REPLACE_ARGS -replace=$ADDR"
+            fi
+          done
+          echo "replace_args=$REPLACE_ARGS" >> "$GITHUB_OUTPUT"
+
+      - name: Terraform apply
+        run: |
+          terraform apply -auto-approve ${{ steps.detect.outputs.replace_args }} \
+            -var="cluster_token=${{ secrets.TF_CLUSTER_TOKEN }}" \
+            -var="ssh_public_key=${{ secrets.TF_SSH_PUBLIC_KEY }}"
+
+      - name: Read Terraform outputs
+        id: tf-output
+        run: |
+          echo "control_plane_ip=$(terraform output -raw control_plane_public_ip)" >> "$GITHUB_OUTPUT"
+          echo "elb_dns_name=$(terraform output -raw elb_dns_name)" >> "$GITHUB_OUTPUT"
