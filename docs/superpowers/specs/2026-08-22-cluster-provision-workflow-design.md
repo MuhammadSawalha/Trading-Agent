@@ -24,6 +24,10 @@ This design automates both into a single `workflow_dispatch` run, modeled on a s
 - **A `deploy-prod.yml`.** Doesn't exist by design (Task 52) — prod deploys go through `promote-prod.yml` + ArgoCD sync, unchanged by this work.
 - **Fixing the underlying no-Elastic-IP problem.** Still blocked on this shared account's EIP quota (documented in `bootstrap.sh.tpl`). This workflow makes recovering from IP churn fast, not the churn itself go away.
 
+## Pre-existing blocker found during planning
+
+Every `infra/k8s/helm/*/values-prod.yaml` ships with a literal, never-filled-in `image: "<ECR_REPO>/<service>"` placeholder. `promote-prod.yml` only ever `sed`s the `tag:` field, never `image:`, so the first real `argocd app sync` against `prod` would have pulled a nonexistent image forever. This blocks the "prod is deployed and healthy" half of the presentation plan discussed above, so fixing it (replacing the placeholder with the real ECR registry URI, `228281126655.dkr.ecr.us-east-1.amazonaws.com`) is included as the first implementation task, ahead of the workflow itself.
+
 ## Architecture
 
 Two jobs in one new workflow, `.github/workflows/provision-cluster.yml`, `workflow_dispatch`-only (no inputs — single env, single region):
