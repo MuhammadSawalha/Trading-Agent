@@ -61,6 +61,22 @@ helm upgrade --install ingress-nginx ingress-nginx \
 kubectl get namespace dev >/dev/null 2>&1 || kubectl create namespace dev
 kubectl get namespace prod >/dev/null 2>&1 || kubectl create namespace prod
 
+# --- ECR credential refresher (dev + prod) ---
+# k3s (unlike EKS) has no built-in way for containerd to authenticate to ECR -- every image
+# pull needs an imagePullSecret, and infra/k8s/ecr-cred-refresher/README.md's manual "apply
+# once per namespace, patch the default ServiceAccount" steps were never wired into cluster
+# recreation, so every fresh cluster silently ImagePullBackOff's on its very first deploy
+# until someone runs them by hand. Doing it here, right after the namespaces exist, closes
+# that gap for good.
+kubectl apply -n dev -f "$SCRIPT_DIR/ecr-cred-refresher/"
+kubectl apply -n prod -f "$SCRIPT_DIR/ecr-cred-refresher/"
+kubectl get job ecr-cred-refresher-initial -n dev >/dev/null 2>&1 || kubectl create job -n dev ecr-cred-refresher-initial --from=cronjob/ecr-cred-refresher
+kubectl get job ecr-cred-refresher-initial -n prod >/dev/null 2>&1 || kubectl create job -n prod ecr-cred-refresher-initial --from=cronjob/ecr-cred-refresher
+kubectl wait --for=condition=complete job/ecr-cred-refresher-initial -n dev --timeout=60s
+kubectl wait --for=condition=complete job/ecr-cred-refresher-initial -n prod --timeout=60s
+kubectl patch serviceaccount default -n dev -p '{"imagePullSecrets": [{"name": "ecr-cred"}]}'
+kubectl patch serviceaccount default -n prod -p '{"imagePullSecrets": [{"name": "ecr-cred"}]}'
+
 # --- ArgoCD ---
 kubectl get namespace argocd >/dev/null 2>&1 || kubectl create namespace argocd
 kubectl apply -n argocd --server-side --force-conflicts \

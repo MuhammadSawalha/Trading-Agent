@@ -130,6 +130,16 @@ jobs:
           target: "/home/ubuntu/cluster-bootstrap"
           strip_components: 2
 
+      - name: Copy ECR credential refresher manifests
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ needs.provision.outputs.control_plane_ip }}
+          username: ubuntu
+          key: ${{ secrets.TF_SSH_PRIVATE_KEY }}
+          source: "infra/k8s/ecr-cred-refresher/*.yaml"
+          target: "/home/ubuntu/cluster-bootstrap/ecr-cred-refresher"
+          strip_components: 3
+
       - name: Copy ArgoCD Applications
         uses: appleboy/scp-action@v0.1.7
         with:
