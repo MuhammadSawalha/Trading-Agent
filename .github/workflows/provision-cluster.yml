@@ -1,0 +1,218 @@
+name: Provision & Bootstrap Cluster
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+# Guards against two runs racing the same dev Terraform state.
+concurrency:
+  group: provision-cluster-dev
+  cancel-in-progress: false
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    outputs:
+      control_plane_ip: ${{ steps.tf-output.outputs.control_plane_ip }}
+      elb_dns_name: ${{ steps.tf-output.outputs.elb_dns_name }}
+    defaults:
+      run:
+        working-directory: infra/terraform/envs/dev
+    steps:
+      - uses: actions/checkout@v4
+
+      # Static keys, not the existing AWS_CI_ROLE_ARN OIDC role -- that role only carries
+      # ECR permissions (infra/terraform/envs/shared/main.tf), and broadening it to
+      # EC2/VPC/IAM-creation scope would widen a CI role's reach on this shared,
+      # multi-student AWS account. These keys are this repo's own IAM user, scoped to this
+      # one workflow's use.
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.TF_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.TF_AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.5"
+          terraform_wrapper: false
+
+      - name: Terraform init
+        run: terraform init
+
+      # aws-learning-budget-keeper-function (this shared account's cost-control Lambda)
+      # stops EC2 instances on a schedule -- `terraform apply` alone is a no-op against a
+      # stopped-but-still-present instance, since Terraform only tracks that the resource
+      # exists, not its power state. This instance also has no Elastic IP (account is over
+      # its EIP quota, see infra/terraform/modules/cluster/bootstrap.sh.tpl), so its public
+      # IP and the TLS cert baked in at install time go stale on every stop/start. Detecting
+      # "stopped" here and forcing -replace recreates the instance with a fresh IP/cert
+      # baked in together, instead of leaving it stopped or racing that same staleness a
+      # plain `start-instances` would hit.
+      - name: Detect stopped instances that need replacing
+        id: detect
+        run: |
+          set -euo pipefail
+          REPLACE_ARGS=""
+          for NAME in stock-research-dev-control-plane stock-research-dev-worker-0 stock-research-dev-worker-1; do
+            FOUND=$(aws ec2 describe-instances \
+              --filters "Name=tag:Name,Values=$NAME" "Name=instance-state-name,Values=stopped,stopping" \
+              --query 'Reservations[].Instances[].InstanceId' --output text)
+            if [ -n "$FOUND" ]; then
+              case "$NAME" in
+                stock-research-dev-control-plane) ADDR="module.cluster.aws_instance.control_plane" ;;
+                stock-research-dev-worker-0)       ADDR="module.cluster.aws_instance.worker[0]" ;;
+                stock-research-dev-worker-1)       ADDR="module.cluster.aws_instance.worker[1]" ;;
+              esac
+              echo "Found $NAME stopped ($FOUND) -- will replace $ADDR"
+              REPLACE_ARGS="$REPLACE_ARGS -replace=$ADDR"
+            fi
+          done
+          echo "replace_args=$REPLACE_ARGS" >> "$GITHUB_OUTPUT"
+
+      - name: Terraform apply
+        run: |
+          terraform apply -auto-approve ${{ steps.detect.outputs.replace_args }} \
+            -var="cluster_token=${{ secrets.TF_CLUSTER_TOKEN }}" \
+            -var="ssh_public_key=${{ secrets.TF_SSH_PUBLIC_KEY }}"
+
+      - name: Read Terraform outputs
+        id: tf-output
+        run: |
+          echo "control_plane_ip=$(terraform output -raw control_plane_public_ip)" >> "$GITHUB_OUTPUT"
+          echo "elb_dns_name=$(terraform output -raw elb_dns_name)" >> "$GITHUB_OUTPUT"
+
+  bootstrap:
+    needs: provision
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # terraform apply returns once the instance is `running`, not once its user-data
+      # (k3s install, several minutes on t3.medium) has actually finished -- jumping
+      # straight to SSH here would race it. cloud-init status --wait is the OS's own
+      # purpose-built signal for "user-data is done".
+      - name: Wait for control-plane initialization to finish
+        env:
+          HOST: ${{ needs.provision.outputs.control_plane_ip }}
+        run: |
+          set -e
+          mkdir -p ~/.ssh
+          echo "${{ secrets.TF_SSH_PRIVATE_KEY }}" > ~/.ssh/control-plane.pem
+          chmod 600 ~/.ssh/control-plane.pem
+
+          echo "Waiting for SSH and cloud-init to finish on $HOST..."
+          for i in $(seq 1 60); do
+            if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i ~/.ssh/control-plane.pem \
+                 "ubuntu@$HOST" 'sudo cloud-init status --wait' 2>/dev/null; then
+              echo "Control plane is ready."
+              exit 0
+            fi
+            echo "Attempt $i/60 - not ready yet, retrying in 10s..."
+            sleep 10
+          done
+          echo "Timed out waiting for the control plane to finish initializing." >&2
+          exit 1
+
+      - name: Copy bootstrap script
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ needs.provision.outputs.control_plane_ip }}
+          username: ubuntu
+          key: ${{ secrets.TF_SSH_PRIVATE_KEY }}
+          source: "infra/k8s/cluster-bootstrap.sh"
+          target: "/home/ubuntu/cluster-bootstrap"
+          strip_components: 2
+
+      - name: Copy ArgoCD Applications
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ needs.provision.outputs.control_plane_ip }}
+          username: ubuntu
+          key: ${{ secrets.TF_SSH_PRIVATE_KEY }}
+          source: "infra/k8s/argocd/applications/*.yaml"
+          target: "/home/ubuntu/cluster-bootstrap/argocd/applications"
+          strip_components: 4
+
+      - name: Copy Prometheus values and ServiceMonitors
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ needs.provision.outputs.control_plane_ip }}
+          username: ubuntu
+          key: ${{ secrets.TF_SSH_PRIVATE_KEY }}
+          source: "monitoring/prometheus/values.yaml,monitoring/prometheus/servicemonitors.yaml"
+          target: "/home/ubuntu/cluster-bootstrap/monitoring"
+          strip_components: 2
+
+      - name: Copy alert rules
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ needs.provision.outputs.control_plane_ip }}
+          username: ubuntu
+          key: ${{ secrets.TF_SSH_PRIVATE_KEY }}
+          source: "monitoring/prometheus/rules/alerts.yaml"
+          target: "/home/ubuntu/cluster-bootstrap/monitoring/rules"
+          strip_components: 3
+
+      - name: Copy Grafana dashboard
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ needs.provision.outputs.control_plane_ip }}
+          username: ubuntu
+          key: ${{ secrets.TF_SSH_PRIVATE_KEY }}
+          source: "monitoring/grafana/dashboards/system-health.json"
+          target: "/home/ubuntu/cluster-bootstrap/monitoring/dashboards"
+          strip_components: 3
+
+      - name: Run cluster bootstrap
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ needs.provision.outputs.control_plane_ip }}
+          username: ubuntu
+          key: ${{ secrets.TF_SSH_PRIVATE_KEY }}
+          command_timeout: 30m
+          envs: GRAFANA_ADMIN_PASSWORD
+          script: |
+            chmod +x /home/ubuntu/cluster-bootstrap/cluster-bootstrap.sh
+            /home/ubuntu/cluster-bootstrap/cluster-bootstrap.sh
+        env:
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+
+      # k3s writes its kubeconfig pointed at 127.0.0.1 (correct for use from the node
+      # itself) -- swap in the real public IP so this file works from anywhere, exactly
+      # like the manual `scp ... && sed -i "s/127.0.0.1/.../"` step this replaces.
+      - name: Fetch kubeconfig and update repo secrets/variables
+        env:
+          HOST: ${{ needs.provision.outputs.control_plane_ip }}
+          ELB_DNS: ${{ needs.provision.outputs.elb_dns_name }}
+          GH_TOKEN: ${{ secrets.REPO_ADMIN_PAT }}
+        run: |
+          set -euo pipefail
+          scp -o StrictHostKeyChecking=no -i ~/.ssh/control-plane.pem \
+            "ubuntu@$HOST:/etc/rancher/k3s/k3s.yaml" /tmp/k3s.yaml
+          sed -i "s/127.0.0.1/$HOST/" /tmp/k3s.yaml
+          base64 -w0 /tmp/k3s.yaml > /tmp/k3s.yaml.b64
+
+          gh secret set KUBECONFIG_DEV --repo "${{ github.repository }}" < /tmp/k3s.yaml.b64
+          gh variable set DEV_HOST --repo "${{ github.repository }}" --body "$ELB_DNS"
+
+          rm -f /tmp/k3s.yaml /tmp/k3s.yaml.b64 ~/.ssh/control-plane.pem
+
+      - name: Job summary
+        env:
+          HOST: ${{ needs.provision.outputs.control_plane_ip }}
+          ELB_DNS: ${{ needs.provision.outputs.elb_dns_name }}
+        run: |
+          {
+            echo "## Cluster provisioned"
+            echo "- Control plane: \`$HOST\`"
+            echo "- ELB DNS (DEV_HOST): \`$ELB_DNS\`"
+            echo "- ArgoCD admin password: see the 'Run cluster bootstrap' step log above"
+            echo "- KUBECONFIG_DEV and DEV_HOST have been updated -- deploy-dev.yml needs no manual changes"
+          } >> "$GITHUB_STEP_SUMMARY"
