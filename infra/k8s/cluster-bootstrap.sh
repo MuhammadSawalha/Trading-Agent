@@ -25,7 +25,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # meant to run across the real 3-node topology, not a single control-plane-only cluster.
 echo "Waiting for both worker nodes to register..."
 for i in $(seq 1 60); do
-  worker_count=$(kubectl get nodes -l '!node-role.kubernetes.io/control-plane' --no-headers 2>/dev/null | wc -l)
+  worker_count=$(kubectl get nodes -l '!node-role.kubernetes.io/control-plane' --no-headers 2>/dev/null | wc -l) || worker_count=0
   if [ "$worker_count" -ge 2 ]; then
     echo "Both worker nodes have registered."
     break
