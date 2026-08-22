@@ -1,4 +1,4 @@
-image: "<ECR_REPO>/tradingview-mcp"
+image: "228281126655.dkr.ecr.us-east-1.amazonaws.com/tradingview-mcp"
 tag: "latest"
 replicas: 2
 hpa:

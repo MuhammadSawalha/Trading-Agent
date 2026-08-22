@@ -1,4 +1,4 @@
-image: "<ECR_REPO>/frontend"
+image: "228281126655.dkr.ecr.us-east-1.amazonaws.com/frontend"
 tag: "latest"
 replicas: 2
 host: "stock-research.example"
