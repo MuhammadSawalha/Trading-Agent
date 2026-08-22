@@ -87,3 +87,132 @@ jobs:
         run: |
           echo "control_plane_ip=$(terraform output -raw control_plane_public_ip)" >> "$GITHUB_OUTPUT"
           echo "elb_dns_name=$(terraform output -raw elb_dns_name)" >> "$GITHUB_OUTPUT"
+
+  bootstrap:
+    needs: provision
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # terraform apply returns once the instance is `running`, not once its user-data
+      # (k3s install, several minutes on t3.medium) has actually finished -- jumping
+      # straight to SSH here would race it. cloud-init status --wait is the OS's own
+      # purpose-built signal for "user-data is done".
+      - name: Wait for control-plane initialization to finish
+        env:
+          HOST: ${{ needs.provision.outputs.control_plane_ip }}
+        run: |
+          set -e
+          mkdir -p ~/.ssh
+          echo "${{ secrets.TF_SSH_PRIVATE_KEY }}" > ~/.ssh/control-plane.pem
+          chmod 600 ~/.ssh/control-plane.pem
+
+          echo "Waiting for SSH and cloud-init to finish on $HOST..."
+          for i in $(seq 1 60); do
+            if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i ~/.ssh/control-plane.pem \
+                 "ubuntu@$HOST" 'sudo cloud-init status --wait' 2>/dev/null; then
+              echo "Control plane is ready."
+              exit 0
+            fi
+            echo "Attempt $i/60 - not ready yet, retrying in 10s..."
+            sleep 10
+          done
+          echo "Timed out waiting for the control plane to finish initializing." >&2
+          exit 1
+
+      - name: Copy bootstrap script
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ needs.provision.outputs.control_plane_ip }}
+          username: ubuntu
+          key: ${{ secrets.TF_SSH_PRIVATE_KEY }}
+          source: "infra/k8s/cluster-bootstrap.sh"
+          target: "/home/ubuntu/cluster-bootstrap"
+          strip_components: 2
+
+      - name: Copy ArgoCD Applications
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ needs.provision.outputs.control_plane_ip }}
+          username: ubuntu
+          key: ${{ secrets.TF_SSH_PRIVATE_KEY }}
+          source: "infra/k8s/argocd/applications/*.yaml"
+          target: "/home/ubuntu/cluster-bootstrap/argocd/applications"
+          strip_components: 4
+
+      - name: Copy Prometheus values and ServiceMonitors
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ needs.provision.outputs.control_plane_ip }}
+          username: ubuntu
+          key: ${{ secrets.TF_SSH_PRIVATE_KEY }}
+          source: "monitoring/prometheus/values.yaml,monitoring/prometheus/servicemonitors.yaml"
+          target: "/home/ubuntu/cluster-bootstrap/monitoring"
+          strip_components: 2
+
+      - name: Copy alert rules
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ needs.provision.outputs.control_plane_ip }}
+          username: ubuntu
+          key: ${{ secrets.TF_SSH_PRIVATE_KEY }}
+          source: "monitoring/prometheus/rules/alerts.yaml"
+          target: "/home/ubuntu/cluster-bootstrap/monitoring/rules"
+          strip_components: 3
+
+      - name: Copy Grafana dashboard
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ needs.provision.outputs.control_plane_ip }}
+          username: ubuntu
+          key: ${{ secrets.TF_SSH_PRIVATE_KEY }}
+          source: "monitoring/grafana/dashboards/system-health.json"
+          target: "/home/ubuntu/cluster-bootstrap/monitoring/dashboards"
+          strip_components: 3
+
+      - name: Run cluster bootstrap
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ needs.provision.outputs.control_plane_ip }}
+          username: ubuntu
+          key: ${{ secrets.TF_SSH_PRIVATE_KEY }}
+          command_timeout: 30m
+          envs: GRAFANA_ADMIN_PASSWORD
+          script: |
+            chmod +x /home/ubuntu/cluster-bootstrap/cluster-bootstrap.sh
+            /home/ubuntu/cluster-bootstrap/cluster-bootstrap.sh
+        env:
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+
+      # k3s writes its kubeconfig pointed at 127.0.0.1 (correct for use from the node
+      # itself) -- swap in the real public IP so this file works from anywhere, exactly
+      # like the manual `scp ... && sed -i "s/127.0.0.1/.../"` step this replaces.
+      - name: Fetch kubeconfig and update repo secrets/variables
+        env:
+          HOST: ${{ needs.provision.outputs.control_plane_ip }}
+          ELB_DNS: ${{ needs.provision.outputs.elb_dns_name }}
+          GH_TOKEN: ${{ secrets.REPO_ADMIN_PAT }}
+        run: |
+          set -euo pipefail
+          scp -o StrictHostKeyChecking=no -i ~/.ssh/control-plane.pem \
+            "ubuntu@$HOST:/etc/rancher/k3s/k3s.yaml" /tmp/k3s.yaml
+          sed -i "s/127.0.0.1/$HOST/" /tmp/k3s.yaml
+          base64 -w0 /tmp/k3s.yaml > /tmp/k3s.yaml.b64
+
+          gh secret set KUBECONFIG_DEV --repo "${{ github.repository }}" < /tmp/k3s.yaml.b64
+          gh variable set DEV_HOST --repo "${{ github.repository }}" --body "$ELB_DNS"
+
+          rm -f /tmp/k3s.yaml /tmp/k3s.yaml.b64 ~/.ssh/control-plane.pem
+
+      - name: Job summary
+        env:
+          HOST: ${{ needs.provision.outputs.control_plane_ip }}
+          ELB_DNS: ${{ needs.provision.outputs.elb_dns_name }}
+        run: |
+          {
+            echo "## Cluster provisioned"
+            echo "- Control plane: \`$HOST\`"
+            echo "- ELB DNS (DEV_HOST): \`$ELB_DNS\`"
+            echo "- ArgoCD admin password: see the 'Run cluster bootstrap' step log above"
+            echo "- KUBECONFIG_DEV and DEV_HOST have been updated -- deploy-dev.yml needs no manual changes"
+          } >> "$GITHUB_STEP_SUMMARY"
