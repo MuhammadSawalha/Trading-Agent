@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone
 from langchain_aws import ChatBedrockConverse
 from pydantic import BaseModel
@@ -5,6 +6,14 @@ from .state import GraphState, Claim
 from .specialists import ClaimModel
 from common.dynamo import write_agent_output, append_process_history
 from common.tracing import langfuse_config
+
+logger = logging.getLogger(__name__)
+
+# Mirrors specialists.py's _MAX_ATTEMPTS: with_structured_output occasionally has the model
+# return a tool-calling response that fails Pydantic validation outright (a transient format
+# slip, not a real disagreement to reason about), and a bounded retry recovers from that
+# immediately instead of aborting the whole pipeline run for the symbol this tick.
+_MAX_ATTEMPTS = 3
 
 # Instructs Bull/Bear to carry the scoring-relevant provenance fields through from the
 # source specialist claim; without it the model reconstructs claims from scratch and these
@@ -105,44 +114,64 @@ def bull_node(state: GraphState) -> dict:
     claims = _all_specialist_claims(state)
 
     append_process_history(symbol, "Bull", reason="pipeline_run", status="started", timestamp=datetime.now(timezone.utc))
-    try:
-        bull_claims = _invoke_bull_llm(claims, symbol)
-        # rebutted_undefended is decided solely by the Bear's rebuttal-judgment step; never
-        # let the claim-construction call invent it.
-        for claim in bull_claims:
-            claim["rebutted_undefended"] = False
-        write_agent_output(symbol, "Bull", {"claims": bull_claims})
-        append_process_history(symbol, "Bull", reason="pipeline_run", status="finished", timestamp=datetime.now(timezone.utc))
-    except Exception:
-        append_process_history(symbol, "Bull", reason="pipeline_run", status="failed", timestamp=datetime.now(timezone.utc))
-        raise
-    return {"bull_claims": bull_claims}
+    last_error: Exception | None = None
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
+        try:
+            bull_claims = _invoke_bull_llm(claims, symbol)
+            # rebutted_undefended is decided solely by the Bear's rebuttal-judgment step;
+            # never let the claim-construction call invent it.
+            for claim in bull_claims:
+                claim["rebutted_undefended"] = False
+            write_agent_output(symbol, "Bull", {"claims": bull_claims})
+            append_process_history(symbol, "Bull", reason="pipeline_run", status="finished", timestamp=datetime.now(timezone.utc))
+            return {"bull_claims": bull_claims}
+        except Exception as exc:
+            last_error = exc
+            logger.warning(
+                "Bull failed for %s on attempt %d/%d, %s",
+                symbol, attempt, _MAX_ATTEMPTS,
+                "retrying" if attempt < _MAX_ATTEMPTS else "giving up",
+                exc_info=True,
+            )
+
+    append_process_history(symbol, "Bull", reason="pipeline_run", status="failed", timestamp=datetime.now(timezone.utc))
+    raise last_error
 
 def bear_node(state: GraphState) -> dict:
     symbol = state["symbol"]
     claims = _all_specialist_claims(state)
 
     append_process_history(symbol, "Bear", reason="pipeline_run", status="started", timestamp=datetime.now(timezone.utc))
-    try:
-        bear_claims = _invoke_bear_llm(claims, symbol)
-        # The rebuttal step never touches the Bear's own claims, so this flag can only ever
-        # be a hallucination on them.
-        for claim in bear_claims:
-            claim["rebutted_undefended"] = False
+    last_error: Exception | None = None
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
+        try:
+            bear_claims = _invoke_bear_llm(claims, symbol)
+            # The rebuttal step never touches the Bear's own claims, so this flag can only
+            # ever be a hallucination on them.
+            for claim in bear_claims:
+                claim["rebutted_undefended"] = False
 
-        rebuttal = _invoke_bear_rebuttal_llm(state.get("bull_claims", []), bear_claims, symbol)
+            rebuttal = _invoke_bear_rebuttal_llm(state.get("bull_claims", []), bear_claims, symbol)
 
-        bull_claims = [dict(c) for c in state.get("bull_claims", [])]
-        for idx in rebuttal["succeeded_indices"]:
-            if 0 <= idx < len(bull_claims):
-                bull_claims[idx]["rebutted_undefended"] = True
+            bull_claims = [dict(c) for c in state.get("bull_claims", [])]
+            for idx in rebuttal["succeeded_indices"]:
+                if 0 <= idx < len(bull_claims):
+                    bull_claims[idx]["rebutted_undefended"] = True
 
-        write_agent_output(symbol, "Bear", {"claims": bear_claims})
-        # Bear mutates Bull's claims, so re-write Bull's row too — otherwise the persisted
-        # AgentOutputs entry goes stale relative to what the Manager actually scores.
-        write_agent_output(symbol, "Bull", {"claims": bull_claims})
-        append_process_history(symbol, "Bear", reason="pipeline_run", status="finished", timestamp=datetime.now(timezone.utc))
-    except Exception:
-        append_process_history(symbol, "Bear", reason="pipeline_run", status="failed", timestamp=datetime.now(timezone.utc))
-        raise
-    return {"bull_claims": bull_claims, "bear_claims": bear_claims}
+            write_agent_output(symbol, "Bear", {"claims": bear_claims})
+            # Bear mutates Bull's claims, so re-write Bull's row too — otherwise the
+            # persisted AgentOutputs entry goes stale relative to what the Manager scores.
+            write_agent_output(symbol, "Bull", {"claims": bull_claims})
+            append_process_history(symbol, "Bear", reason="pipeline_run", status="finished", timestamp=datetime.now(timezone.utc))
+            return {"bull_claims": bull_claims, "bear_claims": bear_claims}
+        except Exception as exc:
+            last_error = exc
+            logger.warning(
+                "Bear failed for %s on attempt %d/%d, %s",
+                symbol, attempt, _MAX_ATTEMPTS,
+                "retrying" if attempt < _MAX_ATTEMPTS else "giving up",
+                exc_info=True,
+            )
+
+    append_process_history(symbol, "Bear", reason="pipeline_run", status="failed", timestamp=datetime.now(timezone.utc))
+    raise last_error
