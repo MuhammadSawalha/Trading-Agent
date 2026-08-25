@@ -3,7 +3,11 @@ kind: Deployment
 metadata:
   name: tradingview-mcp
 spec:
-  replicas: {{ .Values.replicas }}
+  # No replicas field: this Deployment is HPA-managed (templates/hpa.yaml). Setting it here
+  # too makes Helm's next server-side apply fight the HPA's scale-subresource writer for
+  # ownership of .spec.replicas, failing the upgrade outright once the HPA has scaled away
+  # from Values.replicas. Omitting it lets Kubernetes default to 1 replica on first create
+  # and leaves the field fully owned by the HPA from then on.
   selector:
     matchLabels: { app: tradingview-mcp }
   template:
