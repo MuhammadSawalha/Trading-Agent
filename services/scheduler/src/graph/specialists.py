@@ -23,7 +23,10 @@ class ClaimModel(BaseModel):
     strength: Literal["strong", "moderate", "weak"]
     corroborated: bool
     flagged_unreliable: bool
-    rebutted_undefended: bool
+    # Bull/Bear (services/scheduler/src/graph/debate.py) always overwrite this themselves
+    # right after parsing a claim, so it carries no information from the LLM — a default
+    # keeps a model's inconsistent inclusion of it from failing validation outright.
+    rebutted_undefended: bool = False
     source_type: Literal["news", "volume", "other"]
     rationale: str
     # Populated only for source_type="news" (Sentiment) / "volume" (Technical) claims — Task 3's

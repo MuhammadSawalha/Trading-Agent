@@ -2,7 +2,16 @@ import pytest
 from unittest.mock import MagicMock, patch
 from langfuse.langchain import CallbackHandler
 from src.graph import specialists as specialists_mod
-from src.graph.specialists import make_specialist_node
+from src.graph.specialists import ClaimModel, make_specialist_node
+
+def test_claim_model_defaults_rebutted_undefended_to_false():
+    # Regression test: Bull/Bear (src/graph/debate.py) always overwrite this field
+    # themselves after parsing, so the LLM has no reason to reliably include it -- a
+    # missing default made an omission fail Pydantic validation outright and crash the
+    # whole pipeline run.
+    claim = ClaimModel(strength="strong", corroborated=True, flagged_unreliable=False,
+                        source_type="other", rationale="r")
+    assert claim.rebutted_undefended is False
 
 def test_skips_llm_call_when_specialist_not_in_changed_set(monkeypatch):
     read_names = []
